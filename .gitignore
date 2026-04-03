@@ -1,0 +1,72 @@
+# ==============================
+# 環境変数・シークレット
+# ==============================
+.env
+.env.local
+.env.production
+.env.staging
+backend/.env
+backend/.env.*
+!backend/.env.example
+frontend/.env.local
+frontend/.env.production
+frontend/.env.staging
+!frontend/.env.example
+
+# SSL証明書
+nginx/ssl/*.pem
+nginx/ssl/*.key
+nginx/ssl/*.crt
+
+# ==============================
+# Python / Backend
+# ==============================
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# ==============================
+# Node.js / Frontend
+# ==============================
+node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+.turbo/
+
+# ==============================
+# Docker
+# ==============================
+docker-compose.override.yml
+
+# ==============================
+# OS・エディタ
+# ==============================
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.iml
+
+# ==============================
+# バックアップ
+# ==============================
+backups/
+*.dump
+
+# ==============================
+# Claude Code
+# ==============================
+.claude/
+CLAUDE.md
