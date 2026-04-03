@@ -134,8 +134,6 @@ npx playwright test
 
 ## 本番デプロイ
 
-本番環境は `h.kokoro-shift.jp` で Docker Compose + Nginx (SSL) 構成で運用します。
-
 ```bash
 # 初回デプロイ
 ./deploy.sh init
