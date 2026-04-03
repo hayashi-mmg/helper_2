@@ -151,7 +151,7 @@ npx playwright test
 ./deploy.sh backup
 ```
 
-詳細は [VPSデプロイ手順](docs/operations/vps-deployment-h.kokoro-shift.jp.md) を参照してください。
+詳細は [Docker本番デプロイガイド](docs/DOCKER_DEPLOYMENT.md) を参照してください。
 
 ## 主な機能
 

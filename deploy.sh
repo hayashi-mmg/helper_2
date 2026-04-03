@@ -67,9 +67,9 @@ do_init() {
     if [ ! -f nginx/ssl/fullchain.pem ] || [ ! -f nginx/ssl/privkey.pem ]; then
         warn "SSL証明書が見つかりません。以下のコマンドで取得してください:"
         echo ""
-        echo "  sudo certbot certonly --standalone -d h.kokoro-shift.jp"
-        echo "  sudo cp /etc/letsencrypt/live/h.kokoro-shift.jp/fullchain.pem nginx/ssl/"
-        echo "  sudo cp /etc/letsencrypt/live/h.kokoro-shift.jp/privkey.pem nginx/ssl/"
+        echo "  sudo certbot certonly --standalone -d yourdomain.com"
+        echo "  sudo cp /etc/letsencrypt/live/yourdomain.com/fullchain.pem nginx/ssl/"
+        echo "  sudo cp /etc/letsencrypt/live/yourdomain.com/privkey.pem nginx/ssl/"
         echo "  chmod 600 nginx/ssl/*.pem"
         echo ""
         warn "SSL証明書を配置後、再度 ./deploy.sh init を実行してください"
