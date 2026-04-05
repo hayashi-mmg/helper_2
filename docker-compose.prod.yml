@@ -8,9 +8,10 @@ services:
     build: ./nginx
     ports:
       - "80:80"
-      # - "443:443"  # SSL証明書取得後に有効化
+      - "443:443"
     volumes:
       - certbot_webroot:/var/www/certbot:ro
+      - certbot_certs:/etc/letsencrypt:ro
     depends_on:
       backend:
         condition: service_healthy
@@ -28,6 +29,17 @@ services:
       resources:
         limits:
           memory: 256M
+
+  # ==============================
+  # Certbot (SSL証明書取得・更新)
+  # ==============================
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - certbot_webroot:/var/www/certbot
+      - certbot_certs:/etc/letsencrypt
+    networks:
+      - app_network
 
   # ==============================
   # Backend (FastAPI + Gunicorn)
@@ -168,6 +180,7 @@ volumes:
   postgres_data:
   redis_data:
   certbot_webroot:
+  certbot_certs:
 
 networks:
   app_network:
