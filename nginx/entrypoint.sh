@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 
-SSL_CERT="/etc/letsencrypt/live/h.kokoro-shift.jp/fullchain.pem"
-SSL_KEY="/etc/letsencrypt/live/h.kokoro-shift.jp/privkey.pem"
+SSL_CERT="/etc/letsencrypt/live/kokoro-shift.jp/fullchain.pem"
+SSL_KEY="/etc/letsencrypt/live/kokoro-shift.jp/privkey.pem"
 
 if [ -f "$SSL_CERT" ] && [ -f "$SSL_KEY" ]; then
     echo "SSL certificates found. Enabling HTTPS."
@@ -20,8 +20,8 @@ CONF
         listen 443 ssl http2;
         server_name h.kokoro-shift.jp;
 
-        ssl_certificate /etc/letsencrypt/live/h.kokoro-shift.jp/fullchain.pem;
-        ssl_certificate_key /etc/letsencrypt/live/h.kokoro-shift.jp/privkey.pem;
+        ssl_certificate /etc/letsencrypt/live/kokoro-shift.jp/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/kokoro-shift.jp/privkey.pem;
 
         ssl_protocols TLSv1.2 TLSv1.3;
         ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
