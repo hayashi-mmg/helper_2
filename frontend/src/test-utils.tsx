@@ -57,3 +57,10 @@ export const mockHelperUser = {
   full_name: 'ヘルパー花子',
   role: 'helper' as const,
 }
+
+export const mockAdminUser = {
+  id: 'user-3',
+  email: 'admin@test.com',
+  full_name: '管理者太郎',
+  role: 'system_admin' as const,
+}

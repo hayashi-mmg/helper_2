@@ -130,9 +130,10 @@ docker run -it --rm \
   -v $(pwd)/certbot_www:/var/www/certbot \
   certbot/certbot certonly --webroot \
   -w /var/www/certbot \
-  -d your-domain.com \
-  -d www.your-domain.com \
-  --email your-email@example.com \
+  -d kokoro-shift.jp \
+  -d www.kokoro-shift.jp \
+  -d h.kokoro-shift.jp \
+  --email hayaei.com@gmail.com \
   --agree-tos \
   --no-eff-email
 
@@ -143,7 +144,7 @@ docker stop nginx-init && docker rm nginx-init
 ### 4. Nginx HTTPS設定更新
 ```bash
 # nginx-https.confのドメイン名を置換
-sed -i 's/your-domain.com/actual-domain.com/g' nginx/nginx-https.conf
+sed -i 's/kokoro-shift.jp/actual-domain.com/g' nginx/nginx-https.conf
 ```
 
 ### 5. 本番環境ビルド＆起動

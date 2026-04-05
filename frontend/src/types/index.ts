@@ -2,7 +2,7 @@ export interface User {
   id: string
   email: string
   full_name: string
-  role: 'senior' | 'helper' | 'care_manager'
+  role: 'senior' | 'helper' | 'care_manager' | 'system_admin'
   phone?: string
   address?: string
   emergency_contact?: string
@@ -217,4 +217,123 @@ export interface GenerateFromMenuResponse {
   items: GeneratedItem[]
   summary: GenerateSummary
   created_at: string
+}
+
+// --- Admin Management ---
+
+export interface AdminUser {
+  id: string
+  email: string
+  full_name: string
+  role: string
+  phone?: string
+  address?: string
+  emergency_contact?: string
+  medical_notes?: string
+  care_level?: number
+  certification_number?: string
+  specialization?: string[]
+  is_active: boolean
+  last_login_at?: string
+  created_at: string
+  updated_at?: string
+}
+
+export interface AdminUserListResponse {
+  users: AdminUser[]
+  pagination: PaginationInfo
+}
+
+export interface AdminUserCreateResponse {
+  id: string
+  email: string
+  full_name: string
+  role: string
+  is_active: boolean
+  temporary_password: string
+  created_at: string
+  message: string
+}
+
+export interface PasswordResetResponse {
+  user_id: string
+  temporary_password: string
+  message: string
+  sessions_invalidated: boolean
+}
+
+export interface AssignmentUserBrief {
+  id: string
+  full_name: string
+  role: string
+}
+
+export interface Assignment {
+  id: string
+  helper: AssignmentUserBrief
+  senior: AssignmentUserBrief
+  assigned_by: AssignmentUserBrief
+  status: string
+  visit_frequency?: string
+  preferred_days?: number[]
+  preferred_time_start?: string
+  preferred_time_end?: string
+  notes?: string
+  start_date: string
+  end_date?: string
+  created_at: string
+  updated_at?: string
+}
+
+export interface AssignmentListResponse {
+  assignments: Assignment[]
+  pagination: PaginationInfo
+}
+
+export interface AuditLog {
+  id: string
+  user_id?: string
+  user_email?: string
+  user_role?: string
+  action: string
+  resource_type: string
+  resource_id?: string
+  changes?: Record<string, unknown>
+  metadata?: Record<string, unknown>
+  created_at: string
+}
+
+export interface AuditLogListResponse {
+  audit_logs: AuditLog[]
+  pagination: PaginationInfo
+}
+
+export interface DashboardStats {
+  total_users: number
+  users_by_role: Record<string, number>
+  active_users: number
+  inactive_users: number
+  new_users_this_month: number
+  active_assignments: number
+  tasks_completed_this_week: number
+  login_count_today: number
+  generated_at: string
+}
+
+export interface Notification {
+  id: string
+  title: string
+  body: string
+  notification_type: string
+  priority: string
+  reference_type?: string
+  reference_id?: string
+  is_read: boolean
+  read_at?: string
+  created_at: string
+}
+
+export interface NotificationListResponse {
+  notifications: Notification[]
+  pagination: PaginationInfo
 }

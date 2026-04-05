@@ -7,6 +7,13 @@ from app.db.models.message import Message
 from app.db.models.shopping import ShoppingRequest, ShoppingItem
 from app.db.models.pantry_item import PantryItem
 from app.db.models.qr_token import QRToken
+from app.db.models.audit_log import AuditLog
+from app.db.models.user_assignment import UserAssignment
+from app.db.models.system_setting import SystemSetting
+from app.db.models.notification import Notification
+from app.db.models.data_access_log import DataAccessLog
+from app.db.models.compliance_log import ComplianceLog
+from app.db.models.frontend_error_log import FrontendErrorLog
 
 __all__ = [
     "User",
@@ -21,4 +28,11 @@ __all__ = [
     "ShoppingItem",
     "PantryItem",
     "QRToken",
+    "AuditLog",
+    "UserAssignment",
+    "SystemSetting",
+    "Notification",
+    "DataAccessLog",
+    "ComplianceLog",
+    "FrontendErrorLog",
 ]

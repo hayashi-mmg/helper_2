@@ -18,16 +18,23 @@ from app.core.auth import create_access_token, hash_password
 from app.core.config import settings
 from app.core.database import Base, get_db
 from app.db.models import (
+    AuditLog,
+    ComplianceLog,
+    DataAccessLog,
+    FrontendErrorLog,
     Message,
+    Notification,
     PantryItem,
     QRToken,
     Recipe,
     RecipeIngredient,
     ShoppingItem,
     ShoppingRequest,
+    SystemSetting,
     Task,
     TaskCompletion,
     User,
+    UserAssignment,
     WeeklyMenu,
     WeeklyMenuRecipe,
 )
@@ -62,7 +69,9 @@ async def clean_tables():
     cleanup_engine = create_async_engine(TEST_DATABASE_URL, echo=False, poolclass=NullPool)
     async with cleanup_engine.begin() as conn:
         await conn.exec_driver_sql(
-            "TRUNCATE TABLE weekly_menu_recipes, weekly_menus, task_completions, tasks, "
+            "TRUNCATE TABLE frontend_error_logs, compliance_logs, data_access_logs, "
+            "notifications, system_settings, user_assignments, audit_logs, "
+            "weekly_menu_recipes, weekly_menus, task_completions, tasks, "
             "shopping_items, shopping_requests, messages, qr_tokens, "
             "recipe_ingredients, pantry_items, recipes, users CASCADE"
         )
@@ -447,3 +456,71 @@ async def sample_pantry(db: AsyncSession, senior_user: User) -> list[PantryItem]
     for item in items:
         await db.refresh(item)
     return items
+
+
+# ---------------------------------------------------------------------------
+# 管理者フィクスチャ
+# ---------------------------------------------------------------------------
+@pytest_asyncio.fixture
+async def admin_user(db: AsyncSession) -> User:
+    user = User(
+        email="admin@test.com",
+        password_hash=hash_password("password123"),
+        role="system_admin",
+        full_name="管理者太郎",
+        phone="090-5555-6666",
+        is_active=True,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@pytest_asyncio.fixture
+async def sample_assignment(
+    db: AsyncSession, senior_user: User, helper_user: User, admin_user: User,
+) -> UserAssignment:
+    assignment = UserAssignment(
+        helper_id=helper_user.id,
+        senior_id=senior_user.id,
+        assigned_by=admin_user.id,
+        status="active",
+        visit_frequency="週3回",
+        preferred_days=[1, 3, 5],
+        start_date=date.today(),
+        notes="午前中の訪問��希望",
+    )
+    db.add(assignment)
+    await db.commit()
+    await db.refresh(assignment)
+    return assignment
+
+
+@pytest_asyncio.fixture
+async def sample_setting(db: AsyncSession) -> SystemSetting:
+    setting = SystemSetting(
+        setting_key="password_min_length",
+        setting_value={"value": 8},
+        category="security",
+        description="パスワード最小文字数",
+    )
+    db.add(setting)
+    await db.commit()
+    await db.refresh(setting)
+    return setting
+
+
+@pytest_asyncio.fixture
+async def sample_notification(db: AsyncSession, senior_user: User) -> Notification:
+    notif = Notification(
+        user_id=senior_user.id,
+        title="テスト通知",
+        body="テスト通知の本文です",
+        notification_type="system",
+        priority="normal",
+    )
+    db.add(notif)
+    await db.commit()
+    await db.refresh(notif)
+    return notif

@@ -14,14 +14,58 @@ graph TB
     D --> E[Slack]
     D --> F[Email]
     
-    G[Logs] --> H[Log Aggregation]
+    G[Docker Logs] --> N[Promtail]
+    O[App/Security Logs] --> N
+    P[Nginx Access Logs] --> N
+    N --> Q[Loki]
+    Q --> C
+    Q --> D
+    
     I[Health Checks] --> B
     J[Accessibility Monitor] --> B
     
     K[Users] --> L[Nginx]
     L --> A
-    L --> M[Access Logs]
-    M --> H
+    L --> P
+
+    A -->|data_access_logs| R[PostgreSQL]
+    A -->|compliance_logs| R
+    A -->|audit_logs| R
+```
+
+### Loki + Promtail ログ集約基盤
+
+※ 詳細設定は[ログ監査・収集強化仕様書](../logging_audit_specification.md) セクション2を参照
+
+**概要**: Loki + PromtailでDockerコンテナログ、アプリケーションログ、セキュリティログを一元収集し、Grafanaで検索・可視化する。
+
+```bash
+# Loki ヘルスチェック
+curl -f http://localhost:3100/ready
+
+# Promtailターゲット確認
+curl -f http://localhost:9080/targets
+
+# Lokiへのログ取り込み状況確認
+curl -s http://localhost:3100/metrics | grep loki_ingester_chunks_stored_total
+
+# Lokiストレージ使用量確認
+du -sh /var/lib/docker/volumes/*loki*
+```
+
+**LogQLクエリ例**:
+```logql
+# 直近のエラーログ
+{job="app"} | json | level="ERROR"
+
+# 特定ユーザーの操作ログ
+{job="app"} | json | user_id="<target_user_id>"
+
+# 認証失敗ログ
+{job="security"} | json | event="auth_attempt" | success="false"
+
+# HTTPエラーレスポンス
+{job="nginx"} | regexp `(?P<status>\d{3})` | status >= 400
 ```
 
 ## 日常運用タスク
@@ -208,7 +252,33 @@ docker-compose -f docker-compose.prod.yml logs backend | grep -i "authentication
 - キーボードナビゲーション使用率
 - アクセシビリティエラー数
 
-#### 3. アプリケーションダッシュボード
+#### 3. ログ検索ダッシュボード（Loki）
+
+**LogQLベースの検索パネル**:
+- サービス別ログ検索（backend, nginx, postgres）
+- ログレベル別フィルタ（ERROR, WARNING, INFO）
+- trace_idによるリクエスト横断追跡
+- 時系列ログボリューム表示
+
+#### 4. 個人データアクセスダッシュボード
+
+**データアクセス監視パネル**:
+- アクセス件数推移（日別・時間帯別）
+- アクセス者別統計（ロール別、ユーザー別）
+- 担当外アクセス検知アラート表示
+- エクスポート回数監視
+- 異常パターンハイライト
+
+#### 5. コンプライアンスダッシュボード
+
+**法令対応状況パネル**:
+- 未対応請求一覧（期限切れ警告付き）
+- 同意取得状況サマリー
+- データ保持期間遵守状況
+- 漏えい報告タイムライン
+- 月次コンプライアンスレポート
+
+#### 6. アプリケーションダッシュボード
 
 **機能別メトリクス**:
 - レシピ作成・検索数
@@ -273,6 +343,66 @@ groups:
           summary: "High memory usage: {{ $value }}%"
 ```
 
+#### 2.5 セキュリティ監査アラート（即座〜1時間以内対応）
+
+※ 詳細は[ログ監査・収集強化仕様書](../logging_audit_specification.md) セクション6を参照
+
+```yaml
+  - name: security_audit_alerts
+    rules:
+      - alert: UnassignedDataAccess
+        expr: |
+          count_over_time({job="app"} | json | event="personal_data_access" | has_assignment="false" [1h]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "担当外利用者データへのアクセス検知"
+          
+      - alert: BulkDataAccess
+        expr: |
+          sum by (user_id) (count_over_time({job="app"} | json | event="personal_data_access" [1h])) > 50
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "大量個人データアクセス検知: {{ $labels.user_id }}"
+
+      - alert: ExcessiveDataExport
+        expr: |
+          sum by (user_id) (count_over_time({job="app"} | json | event="data_access" | access_type="export" [24h])) >= 3
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "大量データエクスポート検知"
+
+      - alert: LogIntegrityFailure
+        expr: |
+          count_over_time({job="app"} | json | event="log_integrity_failure" [1h]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ログ完全性検証失敗 - 改ざんの可能性"
+
+      - alert: LokiServiceDown
+        expr: up{job="loki"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Lokiログ収集サービスがダウン"
+
+      - alert: PromtailServiceDown
+        expr: up{job="promtail"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Promtailログ転送サービスがダウン"
+```
+
 #### 3. 情報アラート（日次確認）
 
 ```yaml
@@ -304,6 +434,9 @@ groups:
 - [ ] アクセシビリティ機能動作確認
 - [ ] WebSocket接続状況確認
 - [ ] ディスク使用量確認
+- [ ] Loki/Promtailサービス稼働確認
+- [ ] ログ完全性検証バッチの実行結果確認
+- [ ] 未対応コンプライアンス請求の確認（期限切れチェック）
 
 ### 週次チェックリスト
 
@@ -314,6 +447,8 @@ groups:
 - [ ] バックアップ復元テスト
 - [ ] WCAG準拠チェック実行
 - [ ] 監視アラート設定見直し
+- [ ] データアクセス異常レポートの確認（担当外アクセス、深夜帯アクセス）
+- [ ] ログチェーンハッシュの整合性検証
 
 ### 月次チェックリスト
 
@@ -324,6 +459,9 @@ groups:
 - [ ] 災害復旧計画テスト
 - [ ] 運用手順書更新
 - [ ] チーム研修・知識共有
+- [ ] コンプライアンスログ月次レビュー（同意状況、請求対応状況）
+- [ ] ログストレージ容量計画（Loki、DBログテーブル）
+- [ ] ログアーカイブの検証（Warm/Coldティアの整合性確認）
 
 ## 自動化スクリプト
 
@@ -452,6 +590,31 @@ curl -f http://localhost:9090/api/v1/targets
 
 # Prometheus再起動
 docker-compose -f docker-compose.prod.yml restart prometheus
+```
+
+#### 1.5 Lokiログ収集停止
+
+```bash
+# Lokiヘルスチェック
+curl -f http://localhost:3100/ready
+
+# Promtailターゲット確認
+curl -f http://localhost:9080/targets
+
+# Lokiログ確認
+docker-compose -f docker-compose.prod.yml logs --tail=50 loki
+
+# Promtailログ確認
+docker-compose -f docker-compose.prod.yml logs --tail=50 promtail
+
+# Lokiストレージ使用量確認
+du -sh /var/lib/docker/volumes/*loki*
+
+# Loki再起動
+docker-compose -f docker-compose.prod.yml restart loki promtail
+
+# Lokiデータソース接続テスト（Grafana経由）
+curl -u admin:$GRAFANA_PASSWORD http://localhost:3001/api/datasources/proxy/uid/loki/loki/api/v1/labels
 ```
 
 #### 2. Grafanaダッシュボード表示エラー

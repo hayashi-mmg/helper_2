@@ -68,14 +68,14 @@ Task 12.2: Docker本番イメージビルドとデプロイ手順
 
 #### 最小構成
 - **CPU**: 2コア
-- **RAM**: 4GB
-- **ストレージ**: 20GB
+- **RAM**: 6GB（ログ基盤Loki+Promtail込み）
+- **ストレージ**: 40GB
 - **OS**: Ubuntu 22.04 LTS / CentOS 8+
 
 #### 推奨構成
 - **CPU**: 4コア以上
-- **RAM**: 8GB以上
-- **ストレージ**: 50GB以上（SSD推奨）
+- **RAM**: 8GB以上（ログ基盤込みで推奨10GB）
+- **ストレージ**: 80GB以上（SSD推奨、ログ保持領域含む）
 - **OS**: Ubuntu 22.04 LTS
 
 ### ネットワーク要件
@@ -623,7 +623,7 @@ trivy image --severity HIGH,CRITICAL helper4-backend:latest
 
 #### 環境準備
 - [ ] Docker・Docker Composeインストール済み
-- [ ] サーバー要件を満たしている（CPU: 4コア, RAM: 8GB, ストレージ: 50GB）
+- [ ] サーバー要件を満たしている（CPU: 4コア, RAM: 8GB以上（ログ基盤込みで推奨10GB）, ストレージ: 80GB）
 - [ ] プロジェクトをクローン済み
 - [ ] 本番ドメイン取得済み
 - [ ] SSL証明書取得済み
@@ -658,6 +658,91 @@ trivy image --severity HIGH,CRITICAL helper4-backend:latest
 - [ ] モニタリングツール稼働中（Prometheus/Grafana）
 - [ ] 自動バックアップ設定済み
 - [ ] バックアップリストア手順確認済み
+
+#### ログ監査基盤（[ログ監査・収集強化仕様書](./logging_audit_specification.md)参照）
+- [ ] Loki サービス起動・ヘルスチェック通過
+- [ ] Promtail サービス起動・ログ収集確認
+- [ ] Grafana に Loki データソース追加済み
+- [ ] ログ検索ダッシュボード表示確認
+- [ ] セキュリティアラートルール設定済み
+- [ ] ログ完全性検証バッチ（日次）設定済み
+- [ ] データ保持期間自動削除バッチ設定済み
+
+### ログ収集基盤サービス（Loki + Promtail）
+
+※ 詳細設定は[ログ監査・収集強化仕様書](./logging_audit_specification.md) セクション2を参照
+
+```yaml
+# docker-compose.prod.yml への追加サービス
+
+  loki:
+    image: grafana/loki:2.9
+    container_name: helper-loki
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - loki_data:/loki
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+    ports:
+      - "127.0.0.1:3100:3100"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3100/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+    networks:
+      - app-network
+
+  promtail:
+    image: grafana/promtail:2.9
+    container_name: helper-promtail
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/log:/var/log:ro
+      - app_logs:/app/logs:ro
+      - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+    depends_on:
+      loki:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+    networks:
+      - app-network
+```
+
+**追加リソース要件**:
+- Loki: メモリ512MB、CPU 0.5コア
+- Promtail: メモリ128MB、CPU 0.25コア
+- ストレージ: Lokiデータ用に10-20GB追加（31日ホット保持 + 圧縮）
+
+**起動確認**:
+```bash
+# Lokiヘルスチェック
+curl -f http://localhost:3100/ready
+
+# Promtailターゲット確認
+curl -f http://localhost:9080/targets
+```
 
 ### 参考資料
 

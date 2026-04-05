@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import engine
-from app.core.middleware import RateLimitMiddleware, RequestLoggingMiddleware, SecurityHeadersMiddleware
+from app.core.middleware import RateLimitMiddleware, RequestLoggingMiddleware, SecurityHeadersMiddleware, TraceIdMiddleware
 from app.monitoring.health import router as monitoring_router
 from app.sse.routes import router as sse_router
 from app.websocket.routes import router as ws_router
@@ -27,6 +27,7 @@ app = FastAPI(
 # ミドルウェア（逆順に実行される）
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(TraceIdMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,

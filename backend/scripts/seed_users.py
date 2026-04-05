@@ -55,6 +55,13 @@ USERS = [
         "phone": "090-5555-6666",
         "certification_number": "H-99999",
     },
+    {
+        "email": "admin@example.com",
+        "password": "password123",
+        "role": "system_admin",
+        "full_name": "管理者太郎",
+        "phone": "090-7777-8888",
+    },
 ]
 
 

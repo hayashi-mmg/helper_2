@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     RATE_LIMIT_AUTHENTICATED: int = 1000  # per hour
     RATE_LIMIT_UNAUTHENTICATED: int = 100  # per hour
 
+    # Log Integrity
+    LOG_HMAC_KEY: str = "dev-hmac-key-change-in-production"
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",")]

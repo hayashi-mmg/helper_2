@@ -26,10 +26,13 @@
 - OpenAPI 3.0仕様準拠
 - 冪等性を考慮した設計
 
-### 1.3 レート制限
+### 1.3 レート制���
 - **認証済みユーザー**: 1,000リクエスト/時間
-- **未認証**: 100リクエスト/時間
+- **���認証**: 100リクエスト/時間
 - **QRコード生成**: 10リクエスト/分
+- **管理API（/admin/）**: 500リクエ��ト/時間
+- **CSVインポート**: 5リクエスト/時間
+- **一斉通知**: 10リクエスト/時間
 
 ---
 
@@ -1185,7 +1188,236 @@ paths:
 
 ---
 
-## 14. 実装優先順位
+## 14. 管理者用ユーザー管理API
+
+> **詳細仕様**: `docs/admin_management_specification.md` を参照
+
+### 14.1 エンドポイント一覧
+
+管理APIは全て `/api/v1/admin/` プレフィックスを使用し、適切な権限チェックを行う。
+
+#### ユーザーCRUD管理
+| メソッド | エンドポイント | 権限 | 説明 |
+|---------|-------------|------|------|
+| `GET` | `/api/v1/admin/users` | `user:manage` | ユーザー一覧（検索・フィルタ・ページネーション） |
+| `POST` | `/api/v1/admin/users` | `user:manage` | ユーザー作成（一時パスワード自動生成） |
+| `GET` | `/api/v1/admin/users/{user_id}` | `user:manage` | ユーザー詳細（アサイン情報・ログイン履歴含む） |
+| `PUT` | `/api/v1/admin/users/{user_id}` | `user:manage` | ユーザー情報更新 |
+| `PUT` | `/api/v1/admin/users/{user_id}/deactivate` | `user:manage` | ユーザー無効化 |
+| `PUT` | `/api/v1/admin/users/{user_id}/activate` | `user:manage` | ユーザー有効化 |
+| `POST` | `/api/v1/admin/users/{user_id}/reset-password` | `user:manage` | パスワードリセット |
+
+#### アサイン管理
+| メソッド | エンドポイント | 権限 | 説明 |
+|---------|-------------|------|------|
+| `GET` | `/api/v1/admin/assignments` | `user:manage` | アサイン一覧 |
+| `POST` | `/api/v1/admin/assignments` | `user:manage` | アサイン作成 |
+| `GET` | `/api/v1/admin/assignments/{id}` | `user:manage` | アサイン詳細 |
+| `PUT` | `/api/v1/admin/assignments/{id}` | `user:manage` | アサイン更新 |
+| `DELETE` | `/api/v1/admin/assignments/{id}` | `user:manage` | アサイン終了（論理削除） |
+| `GET` | `/api/v1/admin/users/{user_id}/assignments` | `user:manage` | 特定ユーザーのアサイン |
+| `GET` | `/api/v1/assignments/my` | 認証済み | 自分のアサイン取得 |
+
+#### 監査ログ
+| メソッド | エンドポイント | 権限 | 説明 |
+|---------|-------------|------|------|
+| `GET` | `/api/v1/admin/audit-logs` | `system:admin` | 監査ログ一覧（フィルタ・ページネーション） |
+| `GET` | `/api/v1/admin/audit-logs/{id}` | `system:admin` | 監査ログ詳細 |
+
+#### レポート・ダッシュボード
+| メソッド | エンドポイント | 権限 | 説明 |
+|---------|-------------|------|------|
+| `GET` | `/api/v1/admin/dashboard/stats` | `user:manage` | システム概要統計 |
+| `GET` | `/api/v1/admin/reports/users` | `user:manage` | ユーザー統計レポート |
+| `GET` | `/api/v1/admin/reports/assignments` | `user:manage` | アサイン統計レポート |
+| `GET` | `/api/v1/admin/reports/tasks` | `report:read` | タスク完了統計 |
+| `GET` | `/api/v1/admin/reports/activity` | `report:read` | ユーザーアクティビティ |
+
+#### CSVインポート/エクスポート
+| メソッド | エンドポイント | 権限 | 説明 |
+|---------|-------------|------|------|
+| `GET` | `/api/v1/admin/users/export` | `user:manage` | ユーザーCSVエクスポート |
+| `POST` | `/api/v1/admin/users/import` | `system:admin` | ユーザーCSVインポート |
+| `POST` | `/api/v1/admin/users/import/validate` | `system:admin` | CSVバリデーション（ドライラン） |
+
+#### システム設定
+| メソッド | エンドポイント | 権限 | 説明 |
+|---------|-------------|------|------|
+| `GET` | `/api/v1/admin/settings` | `system:admin` | 設定一覧 |
+| `GET` | `/api/v1/admin/settings/{key}` | `system:admin` | 特定設定取得 |
+| `PUT` | `/api/v1/admin/settings/{key}` | `system:admin` | 設定更新 |
+
+#### 通知管理
+| メソッド | エンドポイント | 権限 | 説明 |
+|---------|-------------|------|------|
+| `GET` | `/api/v1/notifications` | 認証済み | 自分の通知一覧 |
+| `PUT` | `/api/v1/notifications/{id}/read` | 認証済み | 通知既読 |
+| `PUT` | `/api/v1/notifications/read-all` | 認証済み | 全件既読 |
+| `POST` | `/api/v1/admin/notifications/broadcast` | `system:admin` | 一斉通知 |
+| `POST` | `/api/v1/admin/notifications/send` | `user:manage` | 個別通知 |
+
+### 14.2 共通仕様
+
+#### 認可チェック
+全ての `/admin/` エンドポイントは以下の共通チェックを実施:
+1. JWT認証トークンの検証
+2. `is_active = true` の確認
+3. エンドポイント固有の権限チェック（上表の「権限」カラム参照）
+
+#### ビジネスロジックエラー
+管理APIは既存のエラーレスポンス形式（12章参照）に加え、以下のエラーコードを返す:
+
+| コード | HTTPステータス | 説明 |
+|-------|--------------|------|
+| `LAST_ADMIN_DEACTIVATION` | 409 | 最後のsystem_adminの無効化試行 |
+| `DUPLICATE_ASSIGNMENT` | 409 | 同一helper+seniorのactiveアサインが既存 |
+| `INVALID_ROLE_FOR_ASSIGNMENT` | 422 | アサイン対象のユーザーロールが不正 |
+| `CSV_VALIDATION_ERROR` | 422 | CSVファイルのバリデーションエラー |
+| `CSV_ROW_LIMIT_EXCEEDED` | 422 | CSVインポート行数上限超過 |
+
+---
+
+## 15. ログ監査・コンプライアンスAPI
+
+※ 詳細仕様は[ログ監査・収集強化仕様書](./logging_audit_specification.md)を参照
+
+### 15.1 個人データアクセスログAPI
+
+| メソッド | エンドポイント | 権限 | 説明 |
+|---------|-------------|------|------|
+| `GET` | `/api/v1/admin/data-access-logs` | `system:admin` | データアクセスログ検索（フィルタ・ページネーション） |
+| `GET` | `/api/v1/admin/data-access-logs/report` | `system:admin` | データアクセス集計レポート |
+| `GET` | `/api/v1/admin/data-access-logs/user/{user_id}` | `system:admin` | 特定利用者のアクセス履歴 |
+
+#### データアクセスログ検索
+```http
+GET /api/v1/admin/data-access-logs?target_user_id={uuid}&date_from=2026-04-01&date_to=2026-04-04&page=1&limit=50
+Authorization: Bearer <access_token>
+```
+
+**クエリパラメータ**: `accessor_user_id`, `target_user_id`, `access_type` (read/write/export/delete), `resource_type`, `has_assignment` (boolean), `date_from`, `date_to`, `page`, `limit`
+
+**成功レスポンス (200 OK)**:
+```json
+{
+  "data_access_logs": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "accessor_user_id": "123e4567-e89b-12d3-a456-426614174001",
+      "accessor_email": "helper@example.com",
+      "accessor_role": "helper",
+      "target_user_id": "123e4567-e89b-12d3-a456-426614174002",
+      "target_user_name": "田中花子",
+      "access_type": "read",
+      "resource_type": "user_profile",
+      "data_fields": ["full_name", "phone", "medical_notes"],
+      "endpoint": "/api/v1/users/123e4567-e89b-12d3-a456-426614174002",
+      "http_method": "GET",
+      "ip_address": "192.168.1.100",
+      "has_assignment": true,
+      "created_at": "2026-04-04T09:30:00Z"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 50,
+    "total": 1500,
+    "total_pages": 30
+  }
+}
+```
+
+### 15.2 コンプライアンスAPI
+
+| メソッド | エンドポイント | 権限 | 説明 |
+|---------|-------------|------|------|
+| `GET` | `/api/v1/admin/compliance/consent-logs` | `system:admin` | 同意ログ検索 |
+| `GET` | `/api/v1/admin/compliance/data-requests` | `system:admin` | データ主体権利行使ログ一覧 |
+| `POST` | `/api/v1/admin/compliance/data-requests` | `system:admin` | 権利行使請求の記録 |
+| `PATCH` | `/api/v1/admin/compliance/data-requests/{id}` | `system:admin` | 請求ステータス更新 |
+| `GET` | `/api/v1/admin/compliance/breach-reports` | `system:admin` | 漏えい報告一覧 |
+| `POST` | `/api/v1/admin/compliance/breach-reports` | `system:admin` | 漏えい報告作成 |
+| `GET` | `/api/v1/admin/compliance/retention-report` | `system:admin` | データ保持状況レポート |
+
+#### データ主体権利行使請求の記録
+```http
+POST /api/v1/admin/compliance/data-requests
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "event_type": "disclosure_request",
+  "target_user_id": "123e4567-e89b-12d3-a456-426614174002",
+  "request_details": {
+    "request_type": "disclosure",
+    "requested_data": ["personal_info", "access_logs"],
+    "identity_verified": true,
+    "identity_method": "本人確認書類",
+    "received_via": "書面"
+  }
+}
+```
+
+**成功レスポンス (201 Created)**:
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440001",
+  "event_type": "disclosure_request",
+  "target_user_id": "123e4567-e89b-12d3-a456-426614174002",
+  "target_user_name": "田中花子",
+  "status": "pending",
+  "deadline_at": "2026-04-18T00:00:00Z",
+  "created_at": "2026-04-04T10:00:00Z"
+}
+```
+
+### 15.3 フロントエンドテレメトリAPI
+
+| メソッド | エンドポイント | 権限 | 説明 |
+|---------|-------------|------|------|
+| `POST` | `/api/v1/telemetry/frontend-logs` | 認証不要 | フロントエンドログ受信（レート制限: 10req/min/ユーザー） |
+
+```http
+POST /api/v1/telemetry/frontend-logs
+Content-Type: application/json
+
+{
+  "logs": [
+    {
+      "type": "js_error",
+      "message": "Cannot read property 'name' of undefined",
+      "stack": "TypeError: ...",
+      "url": "/dashboard",
+      "user_agent": "Mozilla/5.0...",
+      "timestamp": "2026-04-04T10:00:00Z"
+    }
+  ],
+  "client_timestamp": "2026-04-04T10:01:05Z"
+}
+```
+
+**成功レスポンス (202 Accepted)**:
+```json
+{
+  "accepted": true,
+  "count": 1
+}
+```
+
+### 15.4 ログ検索API（Lokiプロキシ）
+
+| メソッド | エンドポイント | 権限 | 説明 |
+|---------|-------------|------|------|
+| `GET` | `/api/v1/admin/logs/search` | `system:admin` | Loki LogQLクエリプロキシ |
+
+```http
+GET /api/v1/admin/logs/search?query={job="security"}&start=2026-04-04T00:00:00Z&end=2026-04-04T23:59:59Z&limit=100
+Authorization: Bearer <access_token>
+```
+
+---
+
+## 付録: 実装優先順位
 
 ### Phase 1: 基本認証・ユーザー管理
 1. 認証API（ログイン・ログアウト・リフレッシュ）
@@ -1205,6 +1437,17 @@ paths:
 9. 買い物管理API
 10. 通知機能
 11. レポート機能
+
+### Phase 5: 管理システム
+12. ユーザーCRUD管理API + パスワードリセット
+13. アサイン管理API + 監査ログAPI
+14. レポート/ダッシュボードAPI + CSVインポート/エクスポート
+15. システム設定API + 通知管理API
+
+### Phase 6: ログ監査・コンプライアンス強化
+16. データアクセスログAPI + フロントエンドテレメトリAPI
+17. コンプライアンスAPI（同意ログ・権利行使・漏えい報告）
+18. ログ検索API（Lokiプロキシ）
 
 ---
 

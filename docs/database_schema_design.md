@@ -21,7 +21,7 @@
 ### 1.2 性能要件
 - **同時接続数**: 1,000接続対応
 - **レスポンス時間**: 一般的なクエリ < 100ms
-- **データ保持期間**: 利用者データ3年、ログ6ヶ月
+- **データ保持期間**: 利用者データ3年、データアクセスログ3年、コンプライアンスログ3年、監査ログ6ヶ月、フロントエンドエラーログ90日
 
 ### 1.3 設計方針
 - **正規化**: 第3正規形を基本とし、性能要件に応じて非正規化
@@ -35,7 +35,7 @@
 
 ### 2.1 概要図
 ```
-Users (利用者・ヘルパー・ケアマネージャー)
+Users (利用者・ヘルパー・ケアマネージャー・システム管理者)
   ├─ 1:N ─ Recipes (レシピ)
   ├─ 1:N ─ WeeklyMenus (週間献立)
   ├─ 1:N ─ Tasks (作業)
@@ -43,7 +43,12 @@ Users (利用者・ヘルパー・ケアマネージャー)
   ├─ 1:N ─ Messages (受信者として)
   ├─ 1:N ─ ShoppingRequests (買い物依頼)
   ├─ 1:N ─ PantryItems (パントリー/在庫管理)
-  └─ 1:N ─ QRTokens (QRコードトークン)
+  ├─ 1:N ─ QRTokens (QRコードトークン)
+  ├─ 1:N ─ AuditLogs (監査ログ・操作者として)
+  ├─ 1:N ─ UserAssignments (アサイン・ヘルパーとして)
+  ├─ 1:N ─ UserAssignments (アサイン・利用者として)
+  ├─ 1:N ─ Notifications (通知)
+  └─ 1:N ─ SystemSettings (設定・更新者として)
 
 WeeklyMenus (週間献立)
   └─ N:M ─ Recipes (レシピ) [WeeklyMenuRecipes経由]
@@ -59,6 +64,31 @@ Tasks (作業)
   ├─ 1:N ─ TaskCompletions (作業完了記録)
   └─ N:1 ─ Users (ヘルパー)
   └─ N:1 ─ Users (利用者)
+
+UserAssignments (ヘルパー⇔利用者アサイン)
+  ├─ N:1 ─ Users (ヘルパー)
+  ├─ N:1 ─ Users (利用者)
+  └─ N:1 ─ Users (アサイン作成者)
+
+AuditLogs (監査ログ)
+  └─ N:1 ─ Users (操作者)
+
+DataAccessLogs (個人データアクセスログ)
+  ├─ N:1 ─ Users (アクセス者)
+  └─ N:1 ─ Users (アクセス対象者)
+
+ComplianceLogs (コンプライアンスログ)
+  ├─ N:1 ─ Users (対象者)
+  └─ N:1 ─ Users (対応者)
+
+FrontendErrorLogs (フロントエンドエラーログ集約)
+  └─ 独立テーブル（PII無し）
+
+Notifications (通知)
+  └─ N:1 ─ Users (通知先)
+
+SystemSettings (システム設定)
+  └─ N:1 ─ Users (更新者)
 
 【献立→買い物リスト連携フロー】
 WeeklyMenus → WeeklyMenuRecipes → Recipes → RecipeIngredients
@@ -77,7 +107,7 @@ CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(255) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
-    role VARCHAR(20) NOT NULL CHECK (role IN ('senior', 'helper', 'care_manager')),
+    role VARCHAR(20) NOT NULL CHECK (role IN ('senior', 'helper', 'care_manager', 'system_admin')),
     
     -- 基本情報
     full_name VARCHAR(100) NOT NULL,
@@ -606,12 +636,336 @@ END;
 $$ LANGUAGE plpgsql;
 ```
 
+### 3.13 AuditLogs（監査ログ）
+**管理操作の監査証跡を記録**
+
+```sql
+CREATE TABLE audit_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    -- 操作者情報（非正規化：ユーザー削除後も保持）
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    user_email VARCHAR(255),
+    user_role VARCHAR(20),
+    
+    -- 操作内容
+    action VARCHAR(50) NOT NULL,
+    resource_type VARCHAR(50) NOT NULL,
+    resource_id UUID,
+    
+    -- 変更詳細
+    changes JSONB,
+    metadata JSONB,
+    
+    -- 記録日時
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- インデックス
+CREATE INDEX idx_audit_logs_user_id ON audit_logs(user_id);
+CREATE INDEX idx_audit_logs_action ON audit_logs(action);
+CREATE INDEX idx_audit_logs_resource ON audit_logs(resource_type, resource_id);
+CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at);
+CREATE INDEX idx_audit_logs_user_action_date ON audit_logs(user_id, action, created_at);
+```
+
+**主要アクション**: `user.create`, `user.update`, `user.deactivate`, `user.activate`, `user.role_change`, `user.password_reset`, `assignment.create`, `assignment.update`, `assignment.delete`, `setting.update`, `auth.login_success`, `auth.login_failure`
+
+**設計ポイント**:
+- `user_email`, `user_role` は非正規化。ユーザー削除後もログを保持するため
+- `changes` はJSONB形式で `{"field": {"old": "旧値", "new": "新値"}}` を格納
+- `metadata` にIPアドレス、ユーザーエージェント等を格納
+- 保持期間: 6ヶ月（自動削除バッチ処理で対応）
+
+### 3.14 UserAssignments（ヘルパー⇔利用者アサイン）
+**ヘルパーと利用者の担当関係を管理**
+
+```sql
+CREATE TABLE user_assignments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    -- アサイン関係
+    helper_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    senior_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    assigned_by UUID NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+    
+    -- ステータス
+    status VARCHAR(20) NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'inactive', 'pending')),
+    
+    -- スケジュール情報
+    visit_frequency VARCHAR(50),
+    preferred_days INTEGER[],
+    preferred_time_start TIME,
+    preferred_time_end TIME,
+    notes TEXT,
+    
+    -- 期間
+    start_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    end_date DATE,
+    
+    -- システム情報
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- インデックス
+CREATE INDEX idx_user_assignments_helper ON user_assignments(helper_id);
+CREATE INDEX idx_user_assignments_senior ON user_assignments(senior_id);
+CREATE INDEX idx_user_assignments_status ON user_assignments(status);
+CREATE INDEX idx_user_assignments_assigned_by ON user_assignments(assigned_by);
+CREATE INDEX idx_user_assignments_active ON user_assignments(helper_id, senior_id) WHERE status = 'active';
+```
+
+**設計ポイント**:
+- `helper_id` は role=helper、`senior_id` は role=senior のユーザーを参照
+- `assigned_by` はアサインを作成したsystem_admin/care_managerを記録
+- `preferred_days` は 1（月曜）〜7（日曜）の配列
+- 同一helper_id + senior_idのactiveアサインは部分一意インデックスで制約
+
+### 3.15 SystemSettings（システム設定）
+**システム設定パラメーターのKey-Value管理**
+
+```sql
+CREATE TABLE system_settings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    -- 設定識別
+    setting_key VARCHAR(100) NOT NULL UNIQUE,
+    setting_value JSONB NOT NULL,
+    
+    -- メタデータ
+    category VARCHAR(50) NOT NULL DEFAULT 'general',
+    description TEXT,
+    is_sensitive BOOLEAN DEFAULT false,
+    
+    -- 更新者
+    updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- インデックス
+CREATE INDEX idx_system_settings_key ON system_settings(setting_key);
+CREATE INDEX idx_system_settings_category ON system_settings(category);
+```
+
+**設計ポイント**:
+- `setting_value` はJSONB形式で柔軟な型の値を格納
+- `is_sensitive` が true の場合、UI表示時にマスキング
+- 初期値はマイグレーションシードで投入（APIからの新規追加・削除は不可）
+
+### 3.16 Notifications（通知）
+**ユーザーへの通知を管理**
+
+```sql
+CREATE TABLE notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    -- 通知先
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    -- 通知内容
+    title VARCHAR(200) NOT NULL,
+    body TEXT NOT NULL,
+    notification_type VARCHAR(30) NOT NULL
+        CHECK (notification_type IN ('system', 'assignment', 'task', 'message', 'alert', 'admin')),
+    priority VARCHAR(10) NOT NULL DEFAULT 'normal'
+        CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+    
+    -- 参照リンク
+    reference_type VARCHAR(50),
+    reference_id UUID,
+    
+    -- 既読状態
+    is_read BOOLEAN DEFAULT false,
+    read_at TIMESTAMP WITH TIME ZONE,
+    
+    -- システム情報
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- インデックス
+CREATE INDEX idx_notifications_user_id ON notifications(user_id);
+CREATE INDEX idx_notifications_unread ON notifications(user_id, is_read, created_at);
+CREATE INDEX idx_notifications_type ON notifications(notification_type);
+CREATE INDEX idx_notifications_created_at ON notifications(created_at);
+```
+
+**設計ポイント**:
+- `reference_type` + `reference_id` で関連リソース（アサイン、タスク等）へのリンクを実現
+- 未読通知の高速取得のために `(user_id, is_read, created_at)` の複合インデックス
+
+### 3.17 DataAccessLogs（個人データアクセスログ）
+**利用者の個人情報に対する全アクセスを記録**
+
+※ 詳細仕様は[ログ監査・収集強化仕様書](./logging_audit_specification.md) セクション3を参照
+
+```sql
+CREATE TABLE data_access_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    -- 誰がアクセスしたか（WHO）
+    accessor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    accessor_email VARCHAR(255) NOT NULL,
+    accessor_role VARCHAR(20) NOT NULL,
+    
+    -- 誰のデータか（WHOSE）
+    target_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    target_user_name VARCHAR(255) NOT NULL,
+    
+    -- 何にアクセスしたか（WHAT）
+    access_type VARCHAR(20) NOT NULL
+        CHECK (access_type IN ('read', 'write', 'export', 'delete')),
+    resource_type VARCHAR(50) NOT NULL,
+    data_fields TEXT[],
+    
+    -- どのようにアクセスしたか（HOW）
+    endpoint VARCHAR(200) NOT NULL,
+    http_method VARCHAR(10) NOT NULL,
+    ip_address INET NOT NULL,
+    user_agent TEXT,
+    
+    -- アクセスコンテキスト
+    has_assignment BOOLEAN NOT NULL DEFAULT false,
+    access_purpose VARCHAR(100),
+    
+    -- ログ完全性
+    log_hash VARCHAR(64),
+    
+    -- 記録日時
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- インデックス
+CREATE INDEX idx_data_access_target ON data_access_logs(target_user_id, created_at);
+CREATE INDEX idx_data_access_accessor ON data_access_logs(accessor_user_id, created_at);
+CREATE INDEX idx_data_access_type ON data_access_logs(access_type, resource_type);
+CREATE INDEX idx_data_access_created ON data_access_logs(created_at);
+CREATE INDEX idx_data_access_unassigned ON data_access_logs(has_assignment, created_at)
+    WHERE has_assignment = false;
+```
+
+**設計ポイント**:
+- `audit_logs`とは別テーブル。ボリューム差（数千件/日 vs 数百件/日）、スキーマ差、保持期間差（3年 vs 6ヶ月）のため分離
+- `accessor_email`, `accessor_role`, `target_user_name` は非正規化（`audit_logs`と同一パターン）
+- `has_assignment = false` の部分インデックスにより、担当外アクセスの異常検知を高速化
+- 保持期間: **3年**（改正個人情報保護法の記録保管義務）
+- `log_hash` はHMAC-SHA256によるエントリ単位の完全性検証用
+
+### 3.18 ComplianceLogs（コンプライアンスログ）
+**改正個人情報保護法対応の記録管理**
+
+※ 詳細仕様は[ログ監査・収集強化仕様書](./logging_audit_specification.md) セクション5を参照
+
+```sql
+CREATE TABLE compliance_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    -- イベント種別
+    event_type VARCHAR(50) NOT NULL
+        CHECK (event_type IN (
+            'consent_given', 'consent_withdrawn',
+            'disclosure_request', 'correction_request',
+            'deletion_request', 'usage_stop_request',
+            'breach_detected', 'breach_reported_ppc', 'breach_notified_user',
+            'retention_expired', 'data_deleted',
+            'third_party_provision'
+        )),
+    
+    -- 対象者
+    target_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    target_user_name VARCHAR(255),
+    
+    -- 操作者（管理者）
+    handled_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    handler_email VARCHAR(255),
+    
+    -- 請求・イベント詳細
+    request_details JSONB NOT NULL,
+    
+    -- ステータス管理
+    status VARCHAR(20) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'in_progress', 'completed', 'rejected')),
+    
+    -- 期限管理
+    deadline_at TIMESTAMP WITH TIME ZONE,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    
+    -- 対応結果
+    response_details JSONB,
+    
+    -- ログ完全性
+    log_hash VARCHAR(64),
+    
+    -- 記録日時
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- インデックス
+CREATE INDEX idx_compliance_event_type ON compliance_logs(event_type);
+CREATE INDEX idx_compliance_target ON compliance_logs(target_user_id, created_at);
+CREATE INDEX idx_compliance_status ON compliance_logs(status) WHERE status != 'completed';
+CREATE INDEX idx_compliance_deadline ON compliance_logs(deadline_at) WHERE status = 'pending';
+CREATE INDEX idx_compliance_created ON compliance_logs(created_at);
+```
+
+**設計ポイント**:
+- 保持期間: **3年**（法定保管義務）
+- `status != 'completed'` の部分インデックスにより、未対応案件の検索を高速化
+- `deadline_at` で対応期限を管理（開示請求は2週間以内、漏えい報告は72時間以内）
+- `request_details`/`response_details` はJSONBで、イベント種別ごとに異なる詳細を柔軟に格納
+
+### 3.19 FrontendErrorLogs（フロントエンドエラーログ集約）
+**フロントエンドのエラーを重複排除して集約保存**
+
+```sql
+CREATE TABLE frontend_error_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    -- エラー識別
+    error_type VARCHAR(30) NOT NULL
+        CHECK (error_type IN ('js_error', 'unhandled_rejection', 'render_error', 'network_error')),
+    message TEXT NOT NULL,
+    stack_hash VARCHAR(64) NOT NULL,      -- スタックトレースのSHA-256ハッシュ（重複排除用）
+    component_name VARCHAR(100),
+    
+    -- 発生状況
+    url VARCHAR(500) NOT NULL,
+    user_agent_category VARCHAR(50),       -- ブラウザカテゴリ（Chrome, Safari, etc.）
+    
+    -- 集約情報
+    occurrence_count INTEGER NOT NULL DEFAULT 1,
+    first_seen_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    
+    -- 影響範囲
+    affected_user_count INTEGER NOT NULL DEFAULT 1,
+    
+    -- 記録日時
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- インデックス
+CREATE UNIQUE INDEX idx_frontend_error_dedup ON frontend_error_logs(stack_hash, url);
+CREATE INDEX idx_frontend_error_type ON frontend_error_logs(error_type, last_seen_at);
+CREATE INDEX idx_frontend_error_count ON frontend_error_logs(occurrence_count DESC);
+CREATE INDEX idx_frontend_error_created ON frontend_error_logs(created_at);
+```
+
+**設計ポイント**:
+- `stack_hash` + `url` の一意インデックスで重複排除。同一エラーは `occurrence_count` を加算
+- 個別のエラーイベントはLokiに保存し、このテーブルはトレンド分析用の集約データ
+- 保持期間: **90日**
+- PII（個人識別情報）は一切格納しない
+
 ---
 
 ## 7. まとめ
 
 ### 7.1 設計のポイント
-- **STI方式**でユーザー管理を統一し、保守性を向上
+- **STI方式**でユーザー管理を統一し、保守性を向上（senior/helper/care_manager/system_adminの4ロール）
 - **中間テーブル**で複雑な献立組み合わせを柔軟に表現
 - **適切なインデックス**で1,000同時接続に対応
 - **UUID主キー**でセキュリティと分散処理に配慮
@@ -625,6 +979,9 @@ $$ LANGUAGE plpgsql;
 6. **ShoppingRequests, ShoppingItems** - 買い物機能
 7. **PantryItems** - パントリー/在庫管理
 8. **QRTokens** - QRコード機能
+9. **AuditLogs, UserAssignments** - 管理機能（ユーザー管理・アサイン管理）
+10. **SystemSettings, Notifications** - システム設定・通知機能
+11. **DataAccessLogs, ComplianceLogs, FrontendErrorLogs** - ログ監査・コンプライアンス強化（[ログ監査・収集強化仕様書](./logging_audit_specification.md)参照）
 
 ### 7.3 注意点
 - マイグレーション実行前は必ずバックアップ

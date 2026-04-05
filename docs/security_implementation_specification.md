@@ -749,15 +749,42 @@ class Permission(Enum):
     REPORT_READ = "report:read"
     REPORT_CREATE = "report:create"
     
-    # 管理者権限
+    # ユーザー管理関連
+    USER_READ = "user:read"
+    USER_CREATE = "user:create"
+    USER_UPDATE = "user:update"
+    USER_DEACTIVATE = "user:deactivate"
     USER_MANAGE = "user:manage"
+    
+    # アサイン管理関連
+    ASSIGNMENT_READ = "assignment:read"
+    ASSIGNMENT_CREATE = "assignment:create"
+    ASSIGNMENT_UPDATE = "assignment:update"
+    ASSIGNMENT_DELETE = "assignment:delete"
+    
+    # 監査ログ関連
+    AUDIT_READ = "audit:read"
+    
+    # 通知関連
+    NOTIFICATION_READ = "notification:read"
+    NOTIFICATION_SEND = "notification:send"
+    
+    # システム設定関連
+    SETTINGS_READ = "settings:read"
+    SETTINGS_UPDATE = "settings:update"
+    
+    # CSV関連
+    CSV_EXPORT = "csv:export"
+    CSV_IMPORT = "csv:import"
+    
+    # システム管理者権限
     SYSTEM_ADMIN = "system:admin"
 
 class Role(Enum):
     SENIOR = "senior"
     HELPER = "helper"
     CARE_MANAGER = "care_manager"
-    ADMIN = "admin"
+    SYSTEM_ADMIN = "system_admin"
 
 # ロール別権限マッピング
 ROLE_PERMISSIONS: Dict[Role, Set[Permission]] = {
@@ -795,10 +822,17 @@ ROLE_PERMISSIONS: Dict[Role, Set[Permission]] = {
         Permission.MESSAGE_READ,
         Permission.SHOPPING_READ,
         Permission.REPORT_READ,
-        Permission.USER_MANAGE,
+        Permission.REPORT_CREATE,
+        # 担当範囲内のユーザー閲覧権限
+        Permission.USER_READ,
+        Permission.ASSIGNMENT_READ,
+        # 限定CSV出力権限
+        Permission.CSV_EXPORT,
+        # 通知受信権限
+        Permission.NOTIFICATION_READ,
     },
     
-    Role.ADMIN: set(Permission)  # 全権限
+    Role.SYSTEM_ADMIN: set(Permission)  # 全権限
 }
 
 class PermissionChecker:
@@ -823,8 +857,9 @@ class PermissionChecker:
         if user_id == resource_user_id:
             return True
         
-        # ケアマネージャーと管理者は他のユーザーのリソースにアクセス可能
-        if user_role in [Role.CARE_MANAGER.value, Role.ADMIN.value]:
+        # ケアマネージャーとシステム管理者は他のユーザーのリソースにアクセス可能
+        # ※care_managerはアサインベースのスコープ制限あり（5.1.3参照）
+        if user_role in [Role.CARE_MANAGER.value, Role.SYSTEM_ADMIN.value]:
             return True
         
         return False
@@ -885,6 +920,121 @@ async def get_recipe(recipe_id: str, current_user: User = Depends(get_current_us
 async def update_user_profile(user_id: str, current_user: User = Depends(get_current_user)):
     # ユーザープロフィール更新処理
     pass
+```
+
+#### 5.1.3 アサインベースアクセス制御（care_manager用）
+
+care_managerの閲覧権限は`user_assignments`テーブルを基に、担当範囲内のユーザーに制限される。
+
+```python
+# backend/app/core/assignment_access.py
+from sqlalchemy import select, or_
+from app.db.models.user_assignment import UserAssignment
+
+class AssignmentAccessChecker:
+    @staticmethod
+    async def get_accessible_user_ids(
+        db: AsyncSession,
+        care_manager_id: str
+    ) -> Set[str]:
+        """ケアマネージャーがアクセス可能なユーザーIDを取得"""
+        query = select(UserAssignment).where(
+            UserAssignment.assigned_by == care_manager_id,
+            UserAssignment.status == 'active'
+        )
+        result = await db.execute(query)
+        assignments = result.scalars().all()
+        
+        user_ids = set()
+        for assignment in assignments:
+            user_ids.add(str(assignment.helper_id))
+            user_ids.add(str(assignment.senior_id))
+        
+        return user_ids
+    
+    @staticmethod
+    async def can_access_user(
+        db: AsyncSession,
+        care_manager_id: str,
+        target_user_id: str
+    ) -> bool:
+        """ケアマネージャーが特定ユーザーにアクセス可能か判定"""
+        accessible = await AssignmentAccessChecker.get_accessible_user_ids(
+            db, care_manager_id
+        )
+        return target_user_id in accessible
+
+def require_assignment_access(resource_user_id_param: str = "user_id"):
+    """アサインベースアクセス制御デコレーター（care_manager用）"""
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, current_user=Depends(get_current_user), 
+                         db=Depends(get_db), **kwargs):
+            # system_adminは無条件アクセス可
+            if current_user.role == Role.SYSTEM_ADMIN.value:
+                return await func(*args, current_user=current_user, db=db, **kwargs)
+            
+            # care_managerはアサインベースでスコープ制限
+            if current_user.role == Role.CARE_MANAGER.value:
+                target_user_id = kwargs.get(resource_user_id_param)
+                if target_user_id and not await AssignmentAccessChecker.can_access_user(
+                    db, str(current_user.id), target_user_id
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="このユーザーへのアクセス権限がありません"
+                    )
+                return await func(*args, current_user=current_user, db=db, **kwargs)
+            
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="管理機能へのアクセス権限がありません"
+            )
+        return wrapper
+    return decorator
+```
+
+#### 5.1.4 管理者用セキュリティポリシー
+
+管理機能（`/api/v1/admin/`）には以下の追加セキュリティ対策を適用する:
+
+| ポリシー | 内容 | 対象ロール |
+|---------|------|----------|
+| **セッションタイムアウト短縮** | 管理セッションは15分（通常30分） | system_admin |
+| **初回パスワード変更強制** | 初回ログイン時にパスワード変更を必須化 | system_admin |
+| **パスワード定期変更推奨** | 90日ごとの変更を推奨（警告表示） | system_admin |
+| **操作監査ログ** | 全管理操作をaudit_logsテーブルに自動記録 | system_admin, care_manager |
+| **最終管理者保護** | 最後のアクティブsystem_adminの無効化を禁止 | system_admin |
+| **管理APIレート制限** | 500リクエスト/時間（通常1,000） | system_admin, care_manager |
+| **2要素認証推奨** | MFA導入を推奨（将来対応） | system_admin |
+
+```python
+# 管理操作の監査ログ自動記録ミドルウェア
+class AdminAuditMiddleware:
+    async def __call__(self, request: Request, call_next):
+        if request.url.path.startswith("/api/v1/admin/"):
+            # リクエスト情報を記録
+            audit_data = {
+                "user_id": request.state.user.id if hasattr(request.state, 'user') else None,
+                "action": f"{request.method} {request.url.path}",
+                "resource_type": self._extract_resource_type(request.url.path),
+                "metadata": {
+                    "ip_address": request.client.host,
+                    "user_agent": request.headers.get("user-agent", ""),
+                    "method": request.method,
+                    "path": request.url.path,
+                }
+            }
+            
+            response = await call_next(request)
+            
+            # レスポンスステータスも記録
+            audit_data["metadata"]["status_code"] = response.status_code
+            await self._save_audit_log(audit_data)
+            
+            return response
+        
+        return await call_next(request)
 ```
 
 ---
@@ -1096,6 +1246,89 @@ class SecurityMonitor:
 
 security_monitor = SecurityMonitor()
 ```
+
+### 6.3 個人データアクセス追跡
+
+※ 完全な仕様は[ログ監査・収集強化仕様書](./logging_audit_specification.md) セクション3を参照
+
+高齢者の個人情報へのアクセスを`data_access_logs`テーブルで追跡する。既存の`SecurityLogger.log_data_access()`を拡張し、**誰が・誰の・どのデータに**アクセスしたかを記録する。
+
+```python
+# SecurityLogger への追加メソッド
+def log_personal_data_access(self, accessor_user_id: str, accessor_role: str,
+                              target_user_id: str, access_type: str,
+                              resource_type: str, data_fields: List[str],
+                              ip_address: str, has_assignment: bool):
+    """個人データアクセスログ（ファイル + DB両方に記録）"""
+    log_data = {
+        "event": "personal_data_access",
+        "accessor_user_id": accessor_user_id,
+        "accessor_role": accessor_role,
+        "target_user_id": target_user_id,
+        "access_type": access_type,
+        "resource_type": resource_type,
+        "data_fields": data_fields,
+        "ip_address": ip_address,
+        "has_assignment": has_assignment,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
+    # ファイルログ（Promtail → Loki）
+    self.logger.info(json.dumps(log_data))
+    
+    # DBログ（data_access_logsテーブルへの非同期バッチ書き込み）
+    # DataAccessLogger経由で処理
+```
+
+**記録対象**: ユーザープロフィール閲覧、医療メモ閲覧、メッセージ閲覧、タスク完了記録閲覧、CSVエクスポート等
+
+### 6.4 セキュリティアラートルール強化
+
+※ 完全な仕様は[ログ監査・収集強化仕様書](./logging_audit_specification.md) セクション6を参照
+
+既存のSecurityMonitor（6.2節）を以下のルールで拡張する:
+
+| カテゴリ | ルール | 条件 | 重要度 |
+|---------|-------|------|-------|
+| **ブルートフォース** | 分散攻撃検知 | 同一IPから3+アカウントに失敗/1時間 | Critical |
+| **権限昇格** | 権限外アクセス繰返 | 同一ユーザーから5回以上の403/1時間 | High |
+| **権限昇格** | 管理者ロール付与 | system_adminロール付与 | Critical |
+| **異常データアクセス** | 大量個人情報閲覧 | 1時間以内に50件以上の異なるユーザーデータ | High |
+| **異常データアクセス** | 担当外アクセス | has_assignment=falseの個人データアクセス | Medium |
+| **異常データアクセス** | 深夜帯アクセス | 22:00-6:00 JSTに個人情報アクセス | Medium |
+| **データ持ち出し** | 連続エクスポート | 1日に3回以上のCSVエクスポート | High |
+| **セッション異常** | 同時多重ログイン | 同一ユーザーが3+異なるIPからアクティブ | High |
+| **ログ完全性** | 改ざん検知 | 日次チェーンハッシュ検証失敗 | Critical |
+
+### 6.5 コンプライアンス要件
+
+※ 完全な仕様は[ログ監査・収集強化仕様書](./logging_audit_specification.md) セクション5を参照
+
+改正個人情報保護法に基づき、以下のイベントを`compliance_logs`テーブルに記録する:
+
+- **同意管理**: 利用規約・プライバシーポリシーへの同意/撤回
+- **データ主体権利行使**: 開示・訂正・削除・利用停止請求と対応結果
+- **漏えい対応**: 検知→個人情報保護委員会報告（3〜5日以内）→本人通知→確報（30日以内）
+- **データ保持**: 保持期間超過データの自動削除と削除証跡
+
+### 6.6 ログ完全性保証
+
+HMAC-SHA256署名 + 日次チェーンハッシュにより、ログの改ざん・削除を検知する。
+
+- **エントリ単位署名**: 各data_access_logs/compliance_logsエントリにHMAC-SHA256ハッシュを付与
+- **日次チェーンハッシュ**: 前日の最終ハッシュを翌日初回に含め、連鎖的に検証
+- **検証バッチ**: 毎日03:00 JSTに前日分を自動検証。失敗時はP1アラート発行
+
+### 6.7 集中ログ収集基盤
+
+※ 完全な仕様は[ログ監査・収集強化仕様書](./logging_audit_specification.md) セクション2を参照
+
+**Loki + Promtail**を導入し、分散するログを一元管理する:
+
+- **Promtail**: Dockerコンテナログ + アプリケーションログ + セキュリティログを収集
+- **Loki**: ラベルベースインデックスで効率的な保存・検索
+- **Grafana**: Lokiデータソースを追加し、ログ検索ダッシュボードを提供
+- **共通フィールド**: `trace_id`（リクエスト追跡ID）でサービス横断的なログ追跡が可能
 
 ---
 

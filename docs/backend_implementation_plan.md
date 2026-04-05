@@ -11,6 +11,7 @@
 | **Phase 3** | 高度機能・最適化 | ✅ **完了** |
 | **Phase 4** | リアルタイム通信・監視 | ✅ **完了** (2025/07/15) |
 | **Phase 5** | 献立→買い物リスト連携 | 🔲 **計画中** |
+| **Phase 6** | ログ監査・コンプライアンス強化 | 🔲 **計画中** |
 
 **主要成果物**:
 - ✅ データベースモデル 6種類（User, Recipe, Menu, Task, Message, QRToken）
@@ -21,6 +22,7 @@
 - ✅ **Phase 3新機能**: Redisキャッシュ・レート制限・構造化ログ・メトリクス収集・バックグラウンドタスク・DB最適化
 - ✅ **Phase 4新機能**: WebSocket通信・SSE・ビジネスロジック層・システム監視・詳細ヘルスチェック
 - 🔲 **Phase 5計画**: 献立→買い物リスト自動生成・パントリー管理・食材構造化
+- 🔲 **Phase 6計画**: Loki+Promtailログ基盤・個人データアクセス監査・コンプライアンスログ・セキュリティアラート強化
 
 ---
 
@@ -1400,6 +1402,101 @@ tests/
 ---
 
 **Phase 5 計画完了。実装承認後に着手可能。**
+
+---
+
+## Phase 6: ログ監査・コンプライアンス強化
+
+※ 完全な仕様は[ログ監査・収集強化仕様書](./logging_audit_specification.md)を参照
+
+### Phase 6 概要
+
+高齢者の個人情報を扱うシステムとして、改正個人情報保護法への準拠とセキュリティインシデントの早期検知を実現するためのログ基盤強化。
+
+### Phase 6A: Loki + Promtail基盤構築
+
+| # | タスク | 詳細 |
+|---|-------|------|
+| 1 | Loki/Promtail Docker Compose定義 | `docker-compose.prod.yml`にサービス追加（Loki 512M、Promtail 128M） |
+| 2 | Promtail設定ファイル作成 | Docker container logs + `/app/logs/` + Nginxアクセスログの収集設定 |
+| 3 | Loki設定ファイル作成 | 保持期間31日、filesystemストレージ、compactor設定 |
+| 4 | Grafana Lokiデータソース追加 | プロビジョニング設定 + ログ検索ダッシュボード作成 |
+| 5 | ログ形式標準化 | `StructuredFormatter`クラス実装（共通フィールド: trace_id, service, user_id） |
+| 6 | trace_idミドルウェア | リクエストごとのtrace_id生成・伝播ミドルウェア |
+
+### Phase 6B: 個人データアクセス監査
+
+| # | タスク | 詳細 |
+|---|-------|------|
+| 1 | `data_access_logs`テーブル作成 | Alembicマイグレーション |
+| 2 | `DataAccessLogger`サービス実装 | バッファリング（50件 or 5秒）+ バッチDB書き込み |
+| 3 | `@track_access`デコレータ実装 | 対象エンドポイントへの適用 |
+| 4 | アサイン関係チェック | `has_assignment`の自動判定（`user_assignments`テーブル参照） |
+| 5 | HMAC署名実装 | エントリ単位のHMAC-SHA256署名 |
+| 6 | APIエンドポイント実装 | `GET /admin/data-access-logs`（検索・レポート・履歴） |
+
+### Phase 6C: コンプライアンスログ
+
+| # | タスク | 詳細 |
+|---|-------|------|
+| 1 | `compliance_logs`テーブル作成 | Alembicマイグレーション |
+| 2 | 同意管理ログ実装 | ユーザー登録時・ポリシー変更時の同意記録 |
+| 3 | データ主体権利行使ログ実装 | 開示・訂正・削除・利用停止請求の管理（ステータス＋期限） |
+| 4 | 漏えい報告ログ実装 | 検知→報告→通知のワークフロー記録 |
+| 5 | APIエンドポイント実装 | `consent-logs`, `data-requests`, `breach-reports`, `retention-report` |
+| 6 | 期限管理リマインダー | 対応期限の自動通知（開示請求2週間以内、漏えい報告72時間以内） |
+
+### Phase 6D: フロントエンドログ + セキュリティアラート
+
+| # | タスク | 詳細 |
+|---|-------|------|
+| 1 | Error Boundary統合 | React Error Boundary + window.onerror + unhandledrejection |
+| 2 | アクセシビリティ利用ログ | フォントサイズ変更、高コントラスト、スクリーンリーダー検出 |
+| 3 | `FrontendLogger`クラス実装 | Beacon API + Fetchフォールバック、バッファリング（50件 or 10秒） |
+| 4 | `frontend_error_logs`テーブル作成 | Alembicマイグレーション（重複排除集約テーブル） |
+| 5 | `POST /telemetry/frontend-logs`エンドポイント | レート制限10req/min/user、PII除外チェック |
+| 6 | SecurityMonitor拡張 | 分散ブルートフォース、権限昇格、異常データアクセス、セッション異常検知 |
+| 7 | Prometheus/Lokiアラートルール定義 | 6つの新規セキュリティアラートルール |
+| 8 | AlertManagerルーティング設定 | Critical→Slack+Email、Warning→Slack |
+
+### Phase 6E: ログライフサイクル管理
+
+| # | タスク | 詳細 |
+|---|-------|------|
+| 1 | 日次チェーンハッシュバッチ | `daily_integrity_check()` — 毎日03:00 JST実行 |
+| 2 | アーカイブバッチ処理 | Warm（30日超過→gzip圧縮）、Cold（180日超過→AES-256暗号化） |
+| 3 | 自動削除バッチ処理 | `run_retention_cleanup()` — 各テーブルの保持期間に基づく自動削除 |
+| 4 | 削除証跡記録 | 削除実行をcomplianceログに記録 |
+| 5 | ログシステム監視 | Loki/Promtailヘルスチェック、ストレージ容量監視 |
+
+### Phase 6 テスト計画
+
+| # | テストケース | 検証内容 |
+|---|-------------|---------|
+| 1 | `test_data_access_log_created` | 個人データ閲覧時にdata_access_logsにレコード作成 |
+| 2 | `test_self_access_not_logged` | 自分自身のデータ閲覧はログ記録しない |
+| 3 | `test_has_assignment_auto_check` | アサイン関係の自動判定が正確 |
+| 4 | `test_hmac_signature_valid` | HMAC署名の生成・検証が正しく動作 |
+| 5 | `test_chain_hash_integrity` | チェーンハッシュの改ざん検知 |
+| 6 | `test_compliance_request_lifecycle` | 請求の作成→進行中→完了のステータス遷移 |
+| 7 | `test_compliance_deadline_check` | 期限超過の検知とアラート |
+| 8 | `test_frontend_log_pii_filter` | フロントエンドログからPIIが除外される |
+| 9 | `test_beacon_batch_flush` | バッファリング＋バッチ送信の動作 |
+| 10 | `test_unassigned_access_alert` | 担当外アクセス時のアラート発火 |
+| 11 | `test_bulk_access_alert` | 大量閲覧時のアラート発火 |
+| 12 | `test_retention_cleanup` | 保持期間超過データの自動削除と証跡記録 |
+| 13 | `test_loki_log_ingestion` | Promtail→Lokiへのログ取り込み |
+| 14 | `test_logql_query_proxy` | ログ検索APIのLogQLプロキシ動作 |
+
+### テスト品質目標
+- **カバレッジ**: Phase 6関連コード 90%以上
+- **全APIエンドポイント**: 正常系 + 異常系（認証エラー、バリデーション、404、403）
+- **セキュリティアラート**: 各ルールの発火条件テスト
+- **データ整合性**: HMAC署名、チェーンハッシュ、保持期間の検証
+
+---
+
+**Phase 6 計画完了。実装承認後に着手可能。**
 
 ---
 

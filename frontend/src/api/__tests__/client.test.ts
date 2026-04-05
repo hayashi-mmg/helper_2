@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { useAuthStore } from '@/stores/auth'
+import type { InternalAxiosRequestConfig } from 'axios'
 
 // client をテスト前にインポート（axiosの設定を確認）
 import client from '../client'
@@ -27,16 +28,18 @@ describe('API client', () => {
       useAuthStore.getState().setAuth('test-access-token', 'test-refresh', mockUser)
 
       // インターセプターを通してヘッダーを検証
-      const config = { headers: {} as Record<string, string> }
-      const interceptor = client.interceptors.request.handlers[0]
+      const handlers = (client.interceptors.request as unknown as { handlers: Array<{ fulfilled: (config: InternalAxiosRequestConfig) => InternalAxiosRequestConfig }> }).handlers
+      const interceptor = handlers[0]
+      const config = { headers: {} } as InternalAxiosRequestConfig
       const result = await interceptor.fulfilled(config)
 
       expect(result.headers.Authorization).toBe('Bearer test-access-token')
     })
 
     it('未認証の場合 Authorization ヘッダーが付与されないこと', async () => {
-      const config = { headers: {} as Record<string, string> }
-      const interceptor = client.interceptors.request.handlers[0]
+      const handlers = (client.interceptors.request as unknown as { handlers: Array<{ fulfilled: (config: InternalAxiosRequestConfig) => InternalAxiosRequestConfig }> }).handlers
+      const interceptor = handlers[0]
+      const config = { headers: {} } as InternalAxiosRequestConfig
       const result = await interceptor.fulfilled(config)
 
       expect(result.headers.Authorization).toBeUndefined()

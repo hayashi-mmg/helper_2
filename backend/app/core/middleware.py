@@ -1,11 +1,13 @@
 import logging
 import time
+import uuid
 from collections import defaultdict
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import settings
+from app.core.structured_logger import request_trace_id, request_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +24,20 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if settings.ENVIRONMENT == "production":
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
+
+
+class TraceIdMiddleware(BaseHTTPMiddleware):
+    """リクエストごとにtrace_idを生成し、レスポンスヘッダーにも付与するミドルウェア。"""
+
+    async def dispatch(self, request: Request, call_next):
+        trace_id = request.headers.get("X-Trace-Id", str(uuid.uuid4()))
+        token = request_trace_id.set(trace_id)
+        try:
+            response = await call_next(request)
+            response.headers["X-Trace-Id"] = trace_id
+            return response
+        finally:
+            request_trace_id.reset(token)
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
