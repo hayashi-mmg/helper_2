@@ -8,9 +8,8 @@ services:
     build: ./nginx
     ports:
       - "80:80"
-      - "443:443"
+      # - "443:443"  # SSL証明書取得後に有効化
     volumes:
-      - ./nginx/ssl:/etc/nginx/ssl:ro
       - certbot_webroot:/var/www/certbot:ro
     depends_on:
       backend:
@@ -102,7 +101,8 @@ services:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/health"]
       interval: 30s
       timeout: 10s
-      retries: 3
+      start_period: 30s
+      retries: 5
 
   # ==============================
   # PostgreSQL データベース
