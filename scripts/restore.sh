@@ -10,7 +10,7 @@
 #   ./scripts/restore.sh -f backups/db/backup_helper_production_20260401_020000.sql.gz --yes
 #   ./scripts/restore.sh -f latest --yes
 #
-# 依存: docker compose, gzip
+# 依存: docker-compose, gzip
 # =============================================================================
 set -euo pipefail
 
@@ -24,11 +24,11 @@ AUTO_CONFIRM=0
 BACKUP_FILE=""
 
 # DB設定読み込み
-if [ -f "$PROJECT_DIR/.env" ]; then
-    POSTGRES_USER=$(grep '^POSTGRES_USER=' "$PROJECT_DIR/.env" | cut -d= -f2)
-    POSTGRES_DB=$(grep '^POSTGRES_DB=' "$PROJECT_DIR/.env" | cut -d= -f2)
+if [ -f "$PROJECT_DIR/.env.production" ]; then
+    POSTGRES_USER=$(grep '^POSTGRES_USER=' "$PROJECT_DIR/.env.production" | cut -d= -f2)
+    POSTGRES_DB=$(grep '^POSTGRES_DB=' "$PROJECT_DIR/.env.production" | cut -d= -f2)
 else
-    echo "[$LOG_TIMESTAMP] ERROR: .env ファイルが見つかりません: $PROJECT_DIR/.env"
+    echo "[$LOG_TIMESTAMP] ERROR: .env.production ファイルが見つかりません: $PROJECT_DIR/.env.production" >&2
     exit 1
 fi
 
@@ -140,7 +140,7 @@ info "リストア前に現在の状態をバックアップ中..."
 pre_restore_file="$BACKUP_DIR/db/pre_restore_${POSTGRES_DB}_$(date +%Y%m%d_%H%M%S).sql.gz"
 mkdir -p "$BACKUP_DIR/db"
 
-docker compose -f "$COMPOSE_FILE" exec -T db \
+docker-compose -f "$COMPOSE_FILE" exec -T db \
     pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=plain \
     | gzip > "$pre_restore_file" 2>/dev/null || {
     warn "リストア前バックアップの作成に失敗（新規DBの可能性）"
@@ -154,23 +154,23 @@ fi
 
 # --- 既存接続の切断 ---
 info "既存のDB接続を切断中..."
-docker compose -f "$COMPOSE_FILE" exec -T db \
+docker-compose -f "$COMPOSE_FILE" exec -T db \
     psql -U "$POSTGRES_USER" -d postgres -c \
     "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$POSTGRES_DB' AND pid <> pg_backend_pid();" \
     > /dev/null 2>&1 || true
 
 # --- データベース再作成 ---
 info "データベースを再作成中..."
-docker compose -f "$COMPOSE_FILE" exec -T db \
+docker-compose -f "$COMPOSE_FILE" exec -T db \
     psql -U "$POSTGRES_USER" -d postgres -c \
     "DROP DATABASE IF EXISTS $POSTGRES_DB;" > /dev/null 2>&1
 
-docker compose -f "$COMPOSE_FILE" exec -T db \
+docker-compose -f "$COMPOSE_FILE" exec -T db \
     psql -U "$POSTGRES_USER" -d postgres -c \
     "CREATE DATABASE $POSTGRES_DB WITH ENCODING 'UTF8' LC_COLLATE='ja_JP.UTF-8' LC_CTYPE='ja_JP.UTF-8';" \
     > /dev/null 2>&1 || {
     # ja_JP.UTF-8 が無い場合のフォールバック
-    docker compose -f "$COMPOSE_FILE" exec -T db \
+    docker-compose -f "$COMPOSE_FILE" exec -T db \
         psql -U "$POSTGRES_USER" -d postgres -c \
         "CREATE DATABASE $POSTGRES_DB WITH ENCODING 'UTF8';" > /dev/null 2>&1
 }
@@ -180,14 +180,14 @@ ok "データベース再作成完了"
 # --- リストア実行 ---
 info "バックアップからリストア中..."
 gunzip -c "$BACKUP_FILE" | \
-    docker compose -f "$COMPOSE_FILE" exec -T db \
+    docker-compose -f "$COMPOSE_FILE" exec -T db \
     psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" > /dev/null 2>&1
 
 ok "リストア完了"
 
 # --- マイグレーション実行 ---
 info "Alembicマイグレーションを確認中..."
-docker compose -f "$COMPOSE_FILE" run --rm backend alembic upgrade head 2>/dev/null || {
+docker-compose -f "$COMPOSE_FILE" run --rm backend alembic upgrade head 2>/dev/null || {
     warn "Alembicマイグレーションをスキップ（backendサービス未起動の可能性）"
 }
 
@@ -195,14 +195,14 @@ docker compose -f "$COMPOSE_FILE" run --rm backend alembic upgrade head 2>/dev/n
 info "リストア後の検証中..."
 
 # テーブル数確認
-table_count=$(docker compose -f "$COMPOSE_FILE" exec -T db \
+table_count=$(docker-compose -f "$COMPOSE_FILE" exec -T db \
     psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
     "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>/dev/null || echo "0")
 
 # 主要テーブルのレコード数
 info "テーブル数: $table_count"
 
-docker compose -f "$COMPOSE_FILE" exec -T db \
+docker-compose -f "$COMPOSE_FILE" exec -T db \
     psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
     "SELECT 'users' AS table_name, COUNT(*) AS count FROM users
      UNION ALL SELECT 'recipes', COUNT(*) FROM recipes

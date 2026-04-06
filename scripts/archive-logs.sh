@@ -10,7 +10,7 @@
 # Cronジョブ:
 #   0 4 1 * * /opt/helper-system/scripts/archive-logs.sh >> /var/log/helper-archive.log 2>&1
 #
-# 依存: docker compose, gzip, openssl, (任意) aws cli
+# 依存: docker-compose, gzip, openssl, (任意) aws cli
 # =============================================================================
 set -euo pipefail
 
@@ -31,11 +31,11 @@ WARM_MONTH=$(date -d "31 days ago" +%Y-%m)
 COLD_MONTH=$(date -d "90 days ago" +%Y-%m)
 
 # DB設定
-if [ -f "$PROJECT_DIR/.env" ]; then
-    POSTGRES_USER=$(grep '^POSTGRES_USER=' "$PROJECT_DIR/.env" | cut -d= -f2)
-    POSTGRES_DB=$(grep '^POSTGRES_DB=' "$PROJECT_DIR/.env" | cut -d= -f2)
+if [ -f "$PROJECT_DIR/.env.production" ]; then
+    POSTGRES_USER=$(grep '^POSTGRES_USER=' "$PROJECT_DIR/.env.production" | cut -d= -f2)
+    POSTGRES_DB=$(grep '^POSTGRES_DB=' "$PROJECT_DIR/.env.production" | cut -d= -f2)
 else
-    echo "[$TIMESTAMP] ERROR: .env ファイルが見つかりません: $PROJECT_DIR/.env"
+    echo "[$TIMESTAMP] ERROR: .env.production ファイルが見つかりません: $PROJECT_DIR/.env.production" >&2
     exit 1
 fi
 
@@ -66,7 +66,7 @@ trap cleanup EXIT
 # --- テーブル存在チェック ---
 table_exists() {
     local table_name="$1"
-    docker compose -f "$COMPOSE_FILE" exec -T db \
+    docker-compose -f "$COMPOSE_FILE" exec -T db \
         psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
         "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = '$table_name')" \
         2>/dev/null | grep -q "t"
@@ -78,7 +78,7 @@ export_table() {
     local condition="$2"
     local output_file="$3"
 
-    docker compose -f "$COMPOSE_FILE" exec -T db \
+    docker-compose -f "$COMPOSE_FILE" exec -T db \
         psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
         "COPY (SELECT * FROM $table_name WHERE $condition) TO STDOUT WITH CSV HEADER" \
         | gzip > "$output_file"
@@ -111,7 +111,7 @@ archive_warm() {
 
             # レコード数確認
             local count
-            count=$(docker compose -f "$COMPOSE_FILE" exec -T db \
+            count=$(docker-compose -f "$COMPOSE_FILE" exec -T db \
                 psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
                 "SELECT COUNT(*) FROM $table WHERE $condition" 2>/dev/null || echo "0")
 
@@ -209,7 +209,7 @@ cleanup_expired() {
         local audit_boundary
         audit_boundary=$(date -d "6 months ago" +%Y-%m-%d)
         local audit_deleted
-        audit_deleted=$(docker compose -f "$COMPOSE_FILE" exec -T db \
+        audit_deleted=$(docker-compose -f "$COMPOSE_FILE" exec -T db \
             psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
             "DELETE FROM audit_logs WHERE created_at < '$audit_boundary' RETURNING id" \
             2>/dev/null | wc -l || echo "0")
@@ -221,7 +221,7 @@ cleanup_expired() {
         local fe_boundary
         fe_boundary=$(date -d "90 days ago" +%Y-%m-%d)
         local fe_deleted
-        fe_deleted=$(docker compose -f "$COMPOSE_FILE" exec -T db \
+        fe_deleted=$(docker-compose -f "$COMPOSE_FILE" exec -T db \
             psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
             "DELETE FROM frontend_error_logs WHERE created_at < '$fe_boundary' RETURNING id" \
             2>/dev/null | wc -l || echo "0")

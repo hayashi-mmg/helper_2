@@ -8,7 +8,7 @@
 # Cronジョブ:
 #   30 2 * * * /opt/helper-system/scripts/backup-logs.sh >> /var/log/helper-log-backup.log 2>&1
 #
-# 依存: docker compose, gzip, (任意) aws cli
+# 依存: docker-compose, gzip, (任意) aws cli
 # =============================================================================
 set -euo pipefail
 
@@ -22,12 +22,12 @@ DATE=$(date +%Y%m%d)
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 S3_BUCKET="${AWS_S3_BUCKET:-}"
 
-# .env から DB接続情報を読み込む
-if [ -f "$PROJECT_DIR/.env" ]; then
-    POSTGRES_USER=$(grep '^POSTGRES_USER=' "$PROJECT_DIR/.env" | cut -d= -f2)
-    POSTGRES_DB=$(grep '^POSTGRES_DB=' "$PROJECT_DIR/.env" | cut -d= -f2)
+# .env.production から DB接続情報を読み込む
+if [ -f "$PROJECT_DIR/.env.production" ]; then
+    POSTGRES_USER=$(grep '^POSTGRES_USER=' "$PROJECT_DIR/.env.production" | cut -d= -f2)
+    POSTGRES_DB=$(grep '^POSTGRES_DB=' "$PROJECT_DIR/.env.production" | cut -d= -f2)
 else
-    echo "[$TIMESTAMP] ERROR: .env ファイルが見つかりません: $PROJECT_DIR/.env"
+    echo "[$TIMESTAMP] ERROR: .env.production ファイルが見つかりません: $PROJECT_DIR/.env.production" >&2
     exit 1
 fi
 
@@ -84,12 +84,12 @@ main() {
 
     # 2. 監査ログ（DB: audit_logs テーブル）
     info "監査ログ(audit_logs)をバックアップ中..."
-    if docker compose -f "$COMPOSE_FILE" exec -T db \
+    if docker-compose -f "$COMPOSE_FILE" exec -T db \
         psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
         "SELECT 1 FROM information_schema.tables WHERE table_name = 'audit_logs'" \
         | grep -q "1"; then
 
-        docker compose -f "$COMPOSE_FILE" exec -T db \
+        docker-compose -f "$COMPOSE_FILE" exec -T db \
             psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
             "COPY (SELECT * FROM audit_logs WHERE created_at >= CURRENT_DATE - INTERVAL '1 day') TO STDOUT WITH CSV HEADER" \
             | gzip > "$BACKUP_DIR/audit/audit_logs_${DATE}.csv.gz"
@@ -100,12 +100,12 @@ main() {
 
     # 3. データアクセスログ（DB: data_access_logs テーブル）
     info "データアクセスログ(data_access_logs)をバックアップ中..."
-    if docker compose -f "$COMPOSE_FILE" exec -T db \
+    if docker-compose -f "$COMPOSE_FILE" exec -T db \
         psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
         "SELECT 1 FROM information_schema.tables WHERE table_name = 'data_access_logs'" \
         | grep -q "1"; then
 
-        docker compose -f "$COMPOSE_FILE" exec -T db \
+        docker-compose -f "$COMPOSE_FILE" exec -T db \
             psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
             "COPY (SELECT * FROM data_access_logs WHERE created_at >= CURRENT_DATE - INTERVAL '1 day') TO STDOUT WITH CSV HEADER" \
             | gzip > "$BACKUP_DIR/data-access/data_access_logs_${DATE}.csv.gz"
@@ -116,12 +116,12 @@ main() {
 
     # 4. コンプライアンスログ（DB: compliance_logs テーブル）
     info "コンプライアンスログ(compliance_logs)をバックアップ中..."
-    if docker compose -f "$COMPOSE_FILE" exec -T db \
+    if docker-compose -f "$COMPOSE_FILE" exec -T db \
         psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
         "SELECT 1 FROM information_schema.tables WHERE table_name = 'compliance_logs'" \
         | grep -q "1"; then
 
-        docker compose -f "$COMPOSE_FILE" exec -T db \
+        docker-compose -f "$COMPOSE_FILE" exec -T db \
             psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
             "COPY (SELECT * FROM compliance_logs WHERE created_at >= CURRENT_DATE - INTERVAL '1 day') TO STDOUT WITH CSV HEADER" \
             | gzip > "$BACKUP_DIR/compliance/compliance_logs_${DATE}.csv.gz"

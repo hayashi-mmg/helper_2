@@ -36,10 +36,10 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# .env から通知設定を読み込む（存在する場合）
-if [ -f "$PROJECT_DIR/.env" ]; then
-    SLACK_BACKUP_WEBHOOK_URL="${SLACK_BACKUP_WEBHOOK_URL:-$(grep '^SLACK_BACKUP_WEBHOOK_URL=' "$PROJECT_DIR/.env" 2>/dev/null | cut -d= -f2- || true)}"
-    BACKUP_ALERT_EMAIL="${BACKUP_ALERT_EMAIL:-$(grep '^BACKUP_ALERT_EMAIL=' "$PROJECT_DIR/.env" 2>/dev/null | cut -d= -f2- || true)}"
+# .env.production から通知設定を読み込む（存在する場合）
+if [ -f "$PROJECT_DIR/.env.production" ]; then
+    SLACK_BACKUP_WEBHOOK_URL="${SLACK_BACKUP_WEBHOOK_URL:-$(grep '^SLACK_BACKUP_WEBHOOK_URL=' "$PROJECT_DIR/.env.production" 2>/dev/null | cut -d= -f2- || true)}"
+    BACKUP_ALERT_EMAIL="${BACKUP_ALERT_EMAIL:-$(grep '^BACKUP_ALERT_EMAIL=' "$PROJECT_DIR/.env.production" 2>/dev/null | cut -d= -f2- || true)}"
 fi
 
 SLACK_WEBHOOK="${SLACK_BACKUP_WEBHOOK_URL:-}"
@@ -140,7 +140,7 @@ send_email() {
    df -h /backups
 
 3. Docker サービスの状態を確認してください
-   docker compose -f docker-compose.prod.yml ps
+   docker-compose -f docker-compose.prod.yml ps
 
 ---
 Home Helper Management System
