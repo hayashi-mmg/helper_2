@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Box, Button, Text, VStack, HStack, Badge, Input, Textarea,
 } from '@chakra-ui/react'
-import { getProfile, updateProfile } from '@/api/users'
+import { changePassword, getProfile, updateProfile } from '@/api/users'
 import PageHeader from '@/components/ui/PageHeader'
 import FormField from '@/components/ui/FormField'
 import LoadingState from '@/components/ui/LoadingState'
@@ -32,9 +32,16 @@ function ProfileField({ label, value }: { label: string; value: string | undefin
   )
 }
 
+interface ApiError {
+  response?: { data?: { detail?: string } }
+}
+
 export default function ProfilePage() {
   const queryClient = useQueryClient()
   const [editing, setEditing] = useState(false)
+  const [showPasswordForm, setShowPasswordForm] = useState(false)
+  const [pwForm, setPwForm] = useState({ current: '', newPw: '', confirm: '' })
+  const [pwError, setPwError] = useState('')
   const [form, setForm] = useState({
     full_name: '',
     phone: '',
@@ -59,6 +66,32 @@ export default function ProfilePage() {
       })
     }
   }, [user])
+
+  const passwordMutation = useMutation({
+    mutationFn: () => changePassword(pwForm.current, pwForm.newPw),
+    onSuccess: () => {
+      setShowPasswordForm(false)
+      setPwForm({ current: '', newPw: '', confirm: '' })
+      setPwError('')
+      toaster.success({ title: 'パスワードを変更しました' })
+    },
+    onError: (err: ApiError) => {
+      setPwError(err.response?.data?.detail ?? 'エラーが発生しました')
+    },
+  })
+
+  const handlePasswordSubmit = () => {
+    setPwError('')
+    if (pwForm.newPw.length < 8) {
+      setPwError('新しいパスワードは8文字以上で入力してください')
+      return
+    }
+    if (pwForm.newPw !== pwForm.confirm) {
+      setPwError('新しいパスワードが一致しません')
+      return
+    }
+    passwordMutation.mutate()
+  }
 
   const updateMutation = useMutation({
     mutationFn: () => updateProfile({
@@ -217,6 +250,79 @@ export default function ProfilePage() {
             </>
           )}
         </Box>
+      </Box>
+
+      {/* パスワード変更セクション */}
+      <Box mt={6} maxW="640px">
+        {!showPasswordForm ? (
+          <Button variant="outline" onClick={() => setShowPasswordForm(true)}>
+            パスワード変更
+          </Button>
+        ) : (
+          <Box
+            bg="bg.card"
+            borderRadius="xl"
+            border="1px solid"
+            borderColor="border.default"
+            p={8}
+          >
+            <VStack align="stretch" gap={4}>
+              <Text fontSize="lg" fontWeight="bold">パスワード変更</Text>
+              {pwError && (
+                <Box bg="red.50" color="red.600" p={3} borderRadius="md" fontSize="sm">
+                  {pwError}
+                </Box>
+              )}
+              <FormField label="現在のパスワード" required>
+                <Input
+                  type="password"
+                  value={pwForm.current}
+                  onChange={(e) => setPwForm({ ...pwForm, current: e.target.value })}
+                  size="lg"
+                  borderRadius="lg"
+                />
+              </FormField>
+              <FormField label="新しいパスワード" required>
+                <Input
+                  type="password"
+                  value={pwForm.newPw}
+                  onChange={(e) => setPwForm({ ...pwForm, newPw: e.target.value })}
+                  size="lg"
+                  borderRadius="lg"
+                />
+              </FormField>
+              <FormField label="新しいパスワード（確認）" required>
+                <Input
+                  type="password"
+                  value={pwForm.confirm}
+                  onChange={(e) => setPwForm({ ...pwForm, confirm: e.target.value })}
+                  size="lg"
+                  borderRadius="lg"
+                />
+              </FormField>
+              <HStack gap={3} pt={2}>
+                <Button
+                  bg="brand.600"
+                  color="white"
+                  _hover={{ bg: 'brand.700' }}
+                  size="lg"
+                  onClick={handlePasswordSubmit}
+                  loading={passwordMutation.isPending}
+                  disabled={!pwForm.current || !pwForm.newPw || !pwForm.confirm}
+                >
+                  変更する
+                </Button>
+                <Button
+                  size="lg"
+                  variant="outline"
+                  onClick={() => { setShowPasswordForm(false); setPwForm({ current: '', newPw: '', confirm: '' }); setPwError('') }}
+                >
+                  キャンセル
+                </Button>
+              </HStack>
+            </VStack>
+          </Box>
+        )}
       </Box>
     </Box>
   )

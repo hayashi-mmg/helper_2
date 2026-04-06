@@ -1,6 +1,6 @@
 """ユーザー API テスト。
 
-仕様: GET /users/me, PUT /users/me
+仕様: GET /users/me, PUT /users/me, PUT /users/me/password
 """
 import pytest
 from httpx import AsyncClient
@@ -90,3 +90,79 @@ class TestUpdateProfile:
         """未認証で 401 が返ること。"""
         res = await client.put("/api/v1/users/me", json={"full_name": "不正"})
         assert res.status_code == 401
+
+
+class TestChangePassword:
+    """パスワード変更のテスト。PUT /users/me/password"""
+
+    async def test_change_password_success(self, client: AsyncClient, senior_user: User):
+        """正しい現在のパスワードで変更できること。"""
+        res = await client.put(
+            "/api/v1/users/me/password",
+            headers=auth_headers(senior_user),
+            json={"current_password": "password123", "new_password": "newpassword456"},
+        )
+        assert res.status_code == 200
+        assert "パスワードを変更しました" in res.json()["message"]
+
+    async def test_login_with_new_password(self, client: AsyncClient, senior_user: User):
+        """変更後の新パスワードでログインできること。"""
+        await client.put(
+            "/api/v1/users/me/password",
+            headers=auth_headers(senior_user),
+            json={"current_password": "password123", "new_password": "newpassword456"},
+        )
+        res = await client.post("/api/v1/auth/login", json={
+            "email": "senior@test.com",
+            "password": "newpassword456",
+        })
+        assert res.status_code == 200
+
+    async def test_old_password_no_longer_works(self, client: AsyncClient, senior_user: User):
+        """変更後の旧パスワードでログインできないこと。"""
+        await client.put(
+            "/api/v1/users/me/password",
+            headers=auth_headers(senior_user),
+            json={"current_password": "password123", "new_password": "newpassword456"},
+        )
+        res = await client.post("/api/v1/auth/login", json={
+            "email": "senior@test.com",
+            "password": "password123",
+        })
+        assert res.status_code == 401
+
+    async def test_change_password_wrong_current(self, client: AsyncClient, senior_user: User):
+        """現在のパスワードが間違っている場合 400 が返ること。"""
+        res = await client.put(
+            "/api/v1/users/me/password",
+            headers=auth_headers(senior_user),
+            json={"current_password": "wrongpassword", "new_password": "newpassword456"},
+        )
+        assert res.status_code == 400
+        assert "現在のパスワードが正しくありません" in res.json()["detail"]
+
+    async def test_change_password_too_short(self, client: AsyncClient, senior_user: User):
+        """新パスワードが8文字未満の場合 422 が返ること。"""
+        res = await client.put(
+            "/api/v1/users/me/password",
+            headers=auth_headers(senior_user),
+            json={"current_password": "password123", "new_password": "short"},
+        )
+        assert res.status_code == 422
+
+    async def test_change_password_unauthenticated(self, client: AsyncClient):
+        """未認証で 401 が返ること。"""
+        res = await client.put(
+            "/api/v1/users/me/password",
+            json={"current_password": "password123", "new_password": "newpassword456"},
+        )
+        assert res.status_code == 401
+
+    async def test_change_password_helper(self, client: AsyncClient, helper_user: User):
+        """ヘルパーもパスワード変更できること。"""
+        res = await client.put(
+            "/api/v1/users/me/password",
+            headers=auth_headers(helper_user),
+            json={"current_password": "password123", "new_password": "helperpass456"},
+        )
+        assert res.status_code == 200

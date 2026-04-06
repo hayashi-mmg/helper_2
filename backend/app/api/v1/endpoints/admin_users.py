@@ -17,6 +17,8 @@ from app.crud.admin import (
 from app.crud.user import create_user, get_user_by_email, update_user
 from app.db.models.user import User
 from app.schemas.admin import (
+    AdminSetPasswordRequest,
+    AdminSetPasswordResponse,
     AdminUserCreate,
     AdminUserCreateResponse,
     AdminUserListResponse,
@@ -273,3 +275,25 @@ async def admin_reset_password(
     )
 
     return PasswordResetResponse(user_id=str(user.id), temporary_password=temp_password)
+
+
+# ---------------------------------------------------------------------------
+# パスワード設定（管理者が任意のパスワードを指定）
+# ---------------------------------------------------------------------------
+@router.put("/{user_id}/set-password", response_model=AdminSetPasswordResponse)
+async def admin_set_password(
+    user_id: uuid.UUID,
+    data: AdminSetPasswordRequest,
+    current_user: User = Depends(require_role("system_admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="ユーザーが見つかりません")
+
+    await update_user(db, user, {"password_hash": hash_password(data.new_password)})
+    await create_audit_log(
+        db, user=current_user, action="user.password_set", resource_type="user", resource_id=user.id,
+    )
+
+    return AdminSetPasswordResponse(user_id=str(user.id))

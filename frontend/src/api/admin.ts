@@ -71,6 +71,11 @@ export async function resetPassword(userId: string): Promise<PasswordResetRespon
   return data
 }
 
+export async function setUserPassword(userId: string, new_password: string): Promise<{ user_id: string; message: string }> {
+  const { data } = await client.put<{ user_id: string; message: string }>(`/admin/users/${userId}/set-password`, { new_password })
+  return data
+}
+
 // ---------------------------------------------------------------------------
 // アサイン管理
 // ---------------------------------------------------------------------------

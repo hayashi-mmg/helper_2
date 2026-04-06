@@ -7,6 +7,7 @@ import {
   deactivateUser,
   getAdminUsers,
   resetPassword,
+  setUserPassword,
   updateAdminUser,
 } from '@/api/admin'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
@@ -52,6 +53,8 @@ export default function AdminUsersPage() {
   const [detailUser, setDetailUser] = useState<AdminUser | null>(null)
   const [confirmAction, setConfirmAction] = useState<{ type: string; user: AdminUser } | null>(null)
   const [tempPassword, setTempPassword] = useState<string | null>(null)
+  const [showSetPassword, setShowSetPassword] = useState<AdminUser | null>(null)
+  const [newPassword, setNewPassword] = useState('')
   const queryClient = useQueryClient()
 
   const { data, isLoading } = useQuery({
@@ -121,6 +124,18 @@ export default function AdminUsersPage() {
     },
     onError: (err: ApiError) => {
       setConfirmAction(null)
+      toaster.create({ title: err.response?.data?.detail ?? 'エラーが発生しました', type: 'error' })
+    },
+  })
+
+  const setPasswordMutation = useMutation({
+    mutationFn: ({ id, password }: { id: string; password: string }) => setUserPassword(id, password),
+    onSuccess: () => {
+      setShowSetPassword(null)
+      setNewPassword('')
+      toaster.create({ title: 'パスワードを設定しました', type: 'success' })
+    },
+    onError: (err: ApiError) => {
       toaster.create({ title: err.response?.data?.detail ?? 'エラーが発生しました', type: 'error' })
     },
   })
@@ -278,6 +293,8 @@ export default function AdminUsersPage() {
                 )}
                 <Button size="sm" variant="outline"
                   onClick={() => setConfirmAction({ type: 'reset', user: detailUser })}>パスワードリセット</Button>
+                <Button size="sm" colorPalette="orange" variant="outline"
+                  onClick={() => { setShowSetPassword(detailUser); setNewPassword(''); setDetailUser(null) }}>パスコード変更</Button>
               </HStack>
             </VStack>
           </Box>
@@ -359,6 +376,39 @@ export default function AdminUsersPage() {
               </Box>
               <Text fontSize="sm" color="text.muted">このパスワードを安全にユーザーに伝達してください。</Text>
               <Button onClick={() => setTempPassword(null)} w="100%">閉じる</Button>
+            </VStack>
+          </Box>
+        </Box>
+      )}
+
+      {/* パスコード変更モーダル */}
+      {showSetPassword && (
+        <Box position="fixed" top={0} left={0} w="100vw" h="100vh" bg="blackAlpha.500" zIndex={1100}
+          onClick={(e) => { if (e.target === e.currentTarget) { setShowSetPassword(null); setNewPassword('') } }}>
+          <Box position="absolute" top="50%" left="50%" transform="translate(-50%, -50%)"
+            bg="bg.card" borderRadius="xl" p={6} w="400px" shadow="xl">
+            <VStack gap={4} align="stretch">
+              <Text fontSize="lg" fontWeight="bold">パスコード変更</Text>
+              <Text fontSize="sm" color="text.muted">{showSetPassword.full_name} ({showSetPassword.email})</Text>
+              <FormField label="新しいパスワード" required>
+                <Input
+                  type="password"
+                  placeholder="新しいパスワードを入力"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                />
+              </FormField>
+              <HStack justify="flex-end" gap={2}>
+                <Button variant="outline" onClick={() => { setShowSetPassword(null); setNewPassword('') }}>キャンセル</Button>
+                <Button
+                  colorPalette="orange"
+                  disabled={newPassword.length < 8}
+                  loading={setPasswordMutation.isPending}
+                  onClick={() => setPasswordMutation.mutate({ id: showSetPassword.id, password: newPassword })}
+                >
+                  設定する
+                </Button>
+              </HStack>
             </VStack>
           </Box>
         </Box>

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 
 
 class UserResponse(BaseModel):
@@ -31,3 +31,19 @@ class UserUpdate(BaseModel):
     care_level: int | None = None
     certification_number: str | None = None
     specialization: list[str] | None = None
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def password_min_length(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("パスワードは8文字以上で入力してください")
+        return v
+
+
+class PasswordChangeResponse(BaseModel):
+    message: str = "パスワードを変更しました"

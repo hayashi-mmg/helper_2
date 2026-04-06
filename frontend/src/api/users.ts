@@ -17,3 +17,8 @@ export async function updateProfile(updates: {
   const { data } = await client.put<User>('/users/me', updates)
   return data
 }
+
+export async function changePassword(current_password: string, new_password: string): Promise<{ message: string }> {
+  const { data } = await client.put<{ message: string }>('/users/me/password', { current_password, new_password })
+  return data
+}

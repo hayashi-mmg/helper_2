@@ -1,6 +1,6 @@
 from datetime import date, datetime, time
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +85,22 @@ class PasswordResetResponse(BaseModel):
     temporary_password: str
     message: str = "パスワードがリセットされました。一時パスワードを安全にユーザーに伝達してください。"
     sessions_invalidated: bool = True
+
+
+class AdminSetPasswordRequest(BaseModel):
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def password_min_length(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("パスワードは8文字以上で入力してください")
+        return v
+
+
+class AdminSetPasswordResponse(BaseModel):
+    user_id: str
+    message: str = "パスワードを設定しました"
 
 
 # ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@
 import pytest
 from httpx import AsyncClient
 
+from app.db.models import User
 from tests.conftest import auth_headers
 
 
@@ -196,3 +197,81 @@ class TestAdminResetPassword:
             headers=auth_headers(admin_user),
         )
         assert resp.status_code == 404
+
+
+class TestAdminSetPassword:
+    """PUT /api/v1/admin/users/{user_id}/set-password"""
+
+    async def test_set_password_success(self, client: AsyncClient, admin_user: User, senior_user: User):
+        """管理者がユーザーのパスワードを設定できること。"""
+        resp = await client.put(
+            f"/api/v1/admin/users/{senior_user.id}/set-password",
+            json={"new_password": "adminset12345"},
+            headers=auth_headers(admin_user),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["user_id"] == str(senior_user.id)
+        assert "パスワードを設定しました" in data["message"]
+
+    async def test_set_password_login_works(self, client: AsyncClient, admin_user: User, senior_user: User):
+        """設定したパスワードでログインできること。"""
+        await client.put(
+            f"/api/v1/admin/users/{senior_user.id}/set-password",
+            json={"new_password": "adminset12345"},
+            headers=auth_headers(admin_user),
+        )
+        res = await client.post("/api/v1/auth/login", json={
+            "email": "senior@test.com",
+            "password": "adminset12345",
+        })
+        assert res.status_code == 200
+
+    async def test_set_password_old_password_fails(self, client: AsyncClient, admin_user: User, senior_user: User):
+        """設定後、旧パスワードでログインできないこと。"""
+        await client.put(
+            f"/api/v1/admin/users/{senior_user.id}/set-password",
+            json={"new_password": "adminset12345"},
+            headers=auth_headers(admin_user),
+        )
+        res = await client.post("/api/v1/auth/login", json={
+            "email": "senior@test.com",
+            "password": "password123",
+        })
+        assert res.status_code == 401
+
+    async def test_set_password_too_short(self, client: AsyncClient, admin_user: User, senior_user: User):
+        """8文字未満のパスワードで 422 が返ること。"""
+        resp = await client.put(
+            f"/api/v1/admin/users/{senior_user.id}/set-password",
+            json={"new_password": "short"},
+            headers=auth_headers(admin_user),
+        )
+        assert resp.status_code == 422
+
+    async def test_set_password_nonexistent_user(self, client: AsyncClient, admin_user: User):
+        """存在しないユーザーで 404 が返ること。"""
+        resp = await client.put(
+            "/api/v1/admin/users/00000000-0000-0000-0000-000000000000/set-password",
+            json={"new_password": "newpassword123"},
+            headers=auth_headers(admin_user),
+        )
+        assert resp.status_code == 404
+
+    async def test_set_password_forbidden_for_non_admin(self, client: AsyncClient, senior_user: User, helper_user: User):
+        """非管理者がパスワード設定を試みると 403 が返ること。"""
+        resp = await client.put(
+            f"/api/v1/admin/users/{helper_user.id}/set-password",
+            json={"new_password": "newpassword123"},
+            headers=auth_headers(senior_user),
+        )
+        assert resp.status_code == 403
+
+    async def test_set_password_forbidden_for_helper(self, client: AsyncClient, helper_user: User, senior_user: User):
+        """ヘルパーがパスワード設定を試みると 403 が返ること。"""
+        resp = await client.put(
+            f"/api/v1/admin/users/{senior_user.id}/set-password",
+            json={"new_password": "newpassword123"},
+            headers=auth_headers(helper_user),
+        )
+        assert resp.status_code == 403

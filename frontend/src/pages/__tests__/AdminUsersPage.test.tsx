@@ -10,6 +10,7 @@ const mockCreateAdminUser = vi.fn()
 const mockDeactivateUser = vi.fn()
 const mockActivateUser = vi.fn()
 const mockResetPassword = vi.fn()
+const mockSetUserPassword = vi.fn()
 
 vi.mock('@/api/admin', () => ({
   getAdminUsers: (...args: unknown[]) => mockGetAdminUsers(...args),
@@ -18,6 +19,7 @@ vi.mock('@/api/admin', () => ({
   deactivateUser: (...args: unknown[]) => mockDeactivateUser(...args),
   activateUser: (...args: unknown[]) => mockActivateUser(...args),
   resetPassword: (...args: unknown[]) => mockResetPassword(...args),
+  setUserPassword: (...args: unknown[]) => mockSetUserPassword(...args),
 }))
 
 const mockUsers = [
@@ -121,5 +123,40 @@ describe('AdminUsersPage', () => {
     mockGetAdminUsers.mockReturnValue(new Promise(() => {}))
     renderWithProviders(<AdminUsersPage />)
     expect(screen.queryByText('田中太郎')).not.toBeInTheDocument()
+  })
+
+  it('ユーザー詳細モーダルにパスコード変更ボタンが表示されること', async () => {
+    renderWithProviders(<AdminUsersPage />)
+    const user = userEvent.setup()
+    await waitFor(() => expect(screen.getByText('田中太郎')).toBeInTheDocument())
+    await user.click(screen.getByText('田中太郎'))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'パスコード変更' })).toBeInTheDocument()
+    })
+  })
+
+  it('パスコード変更ボタンでモーダルが表示されること', async () => {
+    renderWithProviders(<AdminUsersPage />)
+    const user = userEvent.setup()
+    await waitFor(() => expect(screen.getByText('田中太郎')).toBeInTheDocument())
+    await user.click(screen.getByText('田中太郎'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'パスコード変更' })).toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: 'パスコード変更' }))
+    expect(screen.getByPlaceholderText('新しいパスワードを入力')).toBeInTheDocument()
+  })
+
+  it('パスコード変更が成功すること', async () => {
+    mockSetUserPassword.mockResolvedValue({ user_id: 'u1', message: 'パスワードを設定しました' })
+    renderWithProviders(<AdminUsersPage />)
+    const user = userEvent.setup()
+    await waitFor(() => expect(screen.getByText('田中太郎')).toBeInTheDocument())
+    await user.click(screen.getByText('田中太郎'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'パスコード変更' })).toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: 'パスコード変更' }))
+    await user.type(screen.getByPlaceholderText('新しいパスワードを入力'), 'newpassword123')
+    await user.click(screen.getByRole('button', { name: '設定する' }))
+    await waitFor(() => {
+      expect(mockSetUserPassword).toHaveBeenCalledWith('u1', 'newpassword123')
+    })
   })
 })
