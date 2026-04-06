@@ -153,10 +153,10 @@ sed -i 's/kokoro-shift.jp/actual-domain.com/g' nginx/nginx-https.conf
 docker compose -f docker-compose.prod.yml build
 
 # サービス起動
-docker compose -f docker-compose.prod.yml up -d
+docker-compose -f docker-compose.prod.yml up -d
 
 # ログ確認
-docker compose -f docker-compose.prod.yml logs -f
+docker-compose -f docker-compose.prod.yml logs -f
 ```
 
 ### 6. データベース初期化
