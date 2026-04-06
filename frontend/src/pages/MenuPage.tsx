@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Box, Button, Text, VStack, HStack, SimpleGrid, Badge, Input,
+  Box, Button, Text, VStack, HStack, SimpleGrid, Badge, Input, Flex,
 } from '@chakra-ui/react'
 import { getWeeklyMenu, updateWeeklyMenu, copyWeeklyMenu, clearWeeklyMenu } from '@/api/menus'
 import { getRecipes } from '@/api/recipes'
@@ -24,6 +24,28 @@ const DAYS = [
 
 const MEAL_LABELS: Record<string, string> = { breakfast: '朝食', dinner: '夕食' }
 const MEAL_ICONS: Record<string, string> = { breakfast: '☀️', dinner: '🌙' }
+
+const PICKER_CATEGORIES = [
+  { value: '', label: 'すべて' },
+  { value: '和食', label: '🍱 和食' },
+  { value: '洋食', label: '🍝 洋食' },
+  { value: '中華', label: '🥡 中華' },
+  { value: 'その他', label: '🍽️ その他' },
+]
+const PICKER_TYPES = [
+  { value: '', label: 'すべて' },
+  { value: '主菜', label: '主菜' },
+  { value: '副菜', label: '副菜' },
+  { value: '汁物', label: '汁物' },
+  { value: 'ご飯', label: 'ご飯' },
+  { value: 'その他', label: 'その他' },
+]
+const PICKER_DIFFICULTIES = [
+  { value: '', label: 'すべて' },
+  { value: '簡単', label: '簡単' },
+  { value: '普通', label: '普通' },
+  { value: '難しい', label: '難しい' },
+]
 
 function getWeekStartDate(offset: number): string {
   const now = new Date()
@@ -61,6 +83,9 @@ export default function MenuPage() {
   // Recipe picker state
   const [pickerSlot, setPickerSlot] = useState<{ day: string; meal: string } | null>(null)
   const [pickerSearch, setPickerSearch] = useState('')
+  const [pickerCategory, setPickerCategory] = useState('')
+  const [pickerType, setPickerType] = useState('')
+  const [pickerDifficulty, setPickerDifficulty] = useState('')
 
   const { data: menuData, isLoading } = useQuery({
     queryKey: ['menu', weekStart],
@@ -74,14 +99,26 @@ export default function MenuPage() {
 
   const filteredRecipes = useMemo(() => {
     if (!recipesData?.recipes) return []
-    if (!pickerSearch) return recipesData.recipes
-    const q = pickerSearch.toLowerCase()
-    return recipesData.recipes.filter((r: Recipe) =>
-      r.name.toLowerCase().includes(q) ||
-      r.category.includes(q) ||
-      r.type.includes(q)
-    )
-  }, [recipesData, pickerSearch])
+    let results = recipesData.recipes
+    if (pickerCategory) {
+      results = results.filter((r: Recipe) => r.category === pickerCategory)
+    }
+    if (pickerType) {
+      results = results.filter((r: Recipe) => r.type === pickerType)
+    }
+    if (pickerDifficulty) {
+      results = results.filter((r: Recipe) => r.difficulty === pickerDifficulty)
+    }
+    if (pickerSearch) {
+      const q = pickerSearch.toLowerCase()
+      results = results.filter((r: Recipe) =>
+        r.name.toLowerCase().includes(q) ||
+        r.category.includes(q) ||
+        r.type.includes(q)
+      )
+    }
+    return results
+  }, [recipesData, pickerSearch, pickerCategory, pickerType, pickerDifficulty])
 
   const updateMutation = useMutation({
     mutationFn: (params: { menus: Record<string, { breakfast: { recipe_id: string; recipe_type: string }[]; dinner: { recipe_id: string; recipe_type: string }[] }> }) =>
@@ -140,6 +177,9 @@ export default function MenuPage() {
     updateMutation.mutate({ menus: updateMenus })
     setPickerSlot(null)
     setPickerSearch('')
+    setPickerCategory('')
+    setPickerType('')
+    setPickerDifficulty('')
   }
 
   const handleRemoveRecipe = (day: string, meal: string, index: number) => {
@@ -379,7 +419,7 @@ export default function MenuPage() {
           alignItems="center"
           justifyContent="center"
           p={4}
-          onClick={(e) => { if (e.target === e.currentTarget) { setPickerSlot(null); setPickerSearch('') } }}
+          onClick={(e) => { if (e.target === e.currentTarget) { setPickerSlot(null); setPickerSearch(''); setPickerCategory(''); setPickerType(''); setPickerDifficulty('') } }}
         >
           <Box
             bg="bg.card"
@@ -389,7 +429,7 @@ export default function MenuPage() {
             borderColor="border.default"
             shadow="xl"
             w="100%"
-            maxW="500px"
+            maxW="900px"
             maxH="80vh"
             display="flex"
             flexDirection="column"
@@ -410,7 +450,7 @@ export default function MenuPage() {
                 minH="44px"
                 minW="44px"
                 variant="ghost"
-                onClick={() => { setPickerSlot(null); setPickerSearch('') }}
+                onClick={() => { setPickerSlot(null); setPickerSearch(''); setPickerCategory(''); setPickerType(''); setPickerDifficulty('') }}
                 cursor="pointer"
                 aria-label="閉じる"
               >
@@ -422,29 +462,101 @@ export default function MenuPage() {
 
             {/* Search */}
             <Input
-              placeholder="レシピ名・カテゴリで検索..."
+              placeholder="レシピ名で検索..."
               value={pickerSearch}
               onChange={(e) => setPickerSearch(e.target.value)}
               size="lg"
               fontSize="md"
               borderRadius="lg"
               minH="48px"
-              mb={4}
+              mb={3}
               autoFocus
             />
 
-            {/* Recipe List */}
+            {/* Filters */}
+            <SimpleGrid columns={{ base: 1, sm: 3 }} gap={2} mb={3}>
+              <Box>
+                <Text fontSize="xs" fontWeight="bold" color="text.secondary" mb={1}>カテゴリ</Text>
+                <Flex gap={1} flexWrap="wrap">
+                  {PICKER_CATEGORIES.map((cat) => (
+                    <Button
+                      key={cat.value}
+                      size="sm"
+                      minH="36px"
+                      px={3}
+                      variant={pickerCategory === cat.value ? 'solid' : 'outline'}
+                      bg={pickerCategory === cat.value ? 'brand.600' : undefined}
+                      color={pickerCategory === cat.value ? 'white' : 'text.primary'}
+                      borderRadius="full"
+                      onClick={() => setPickerCategory(cat.value)}
+                      cursor="pointer"
+                      fontSize="sm"
+                    >
+                      {cat.label}
+                    </Button>
+                  ))}
+                </Flex>
+              </Box>
+              <Box>
+                <Text fontSize="xs" fontWeight="bold" color="text.secondary" mb={1}>種類</Text>
+                <Flex gap={1} flexWrap="wrap">
+                  {PICKER_TYPES.map((t) => (
+                    <Button
+                      key={t.value}
+                      size="sm"
+                      minH="36px"
+                      px={3}
+                      variant={pickerType === t.value ? 'solid' : 'outline'}
+                      bg={pickerType === t.value ? 'cyan.600' : undefined}
+                      color={pickerType === t.value ? 'white' : 'text.primary'}
+                      borderRadius="full"
+                      onClick={() => setPickerType(t.value)}
+                      cursor="pointer"
+                      fontSize="sm"
+                    >
+                      {t.label}
+                    </Button>
+                  ))}
+                </Flex>
+              </Box>
+              <Box>
+                <Text fontSize="xs" fontWeight="bold" color="text.secondary" mb={1}>難易度</Text>
+                <Flex gap={1} flexWrap="wrap">
+                  {PICKER_DIFFICULTIES.map((d) => (
+                    <Button
+                      key={d.value}
+                      size="sm"
+                      minH="36px"
+                      px={3}
+                      variant={pickerDifficulty === d.value ? 'solid' : 'outline'}
+                      bg={pickerDifficulty === d.value
+                        ? d.value === '簡単' ? 'green.500' : d.value === '普通' ? 'orange.500' : d.value === '難しい' ? 'red.500' : 'brand.600'
+                        : undefined}
+                      color={pickerDifficulty === d.value ? 'white' : 'text.primary'}
+                      borderRadius="full"
+                      onClick={() => setPickerDifficulty(d.value)}
+                      cursor="pointer"
+                      fontSize="sm"
+                    >
+                      {d.label}
+                    </Button>
+                  ))}
+                </Flex>
+              </Box>
+            </SimpleGrid>
+
+            {/* Recipe Grid */}
             <Box flex={1} overflowY="auto">
-              <VStack gap={2} align="stretch">
-                {filteredRecipes.length === 0 ? (
-                  <Text fontSize="md" color="text.muted" textAlign="center" py={8}>
-                    レシピが見つかりません
-                  </Text>
-                ) : (
-                  filteredRecipes.map((recipe: Recipe) => (
+              {filteredRecipes.length === 0 ? (
+                <Text fontSize="md" color="text.muted" textAlign="center" py={8}>
+                  レシピが見つかりません
+                </Text>
+              ) : (
+                <SimpleGrid columns={{ base: 2, sm: 3 }} gap={2}>
+                  {filteredRecipes.map((recipe: Recipe) => (
                     <Box
                       key={recipe.id}
-                      p={4}
+                      p={3}
                       bg="bg.muted"
                       borderRadius="lg"
                       _hover={{ bg: 'brand.50', borderColor: 'brand.300' }}
@@ -454,25 +566,18 @@ export default function MenuPage() {
                       cursor="pointer"
                       onClick={() => handlePickRecipe(recipe)}
                     >
-                      <HStack justify="space-between">
-                        <VStack align="start" gap={1}>
-                          <Text fontSize="md" fontWeight="medium" color="text.primary">
-                            {recipe.name}
-                          </Text>
-                          <HStack gap={2}>
-                            <Badge colorPalette="blue" variant="subtle" fontSize="xs">{recipe.category}</Badge>
-                            <Badge colorPalette="cyan" variant="subtle" fontSize="xs">{recipe.type}</Badge>
-                            <Text fontSize="sm" color="text.muted">{recipe.cooking_time}分</Text>
-                          </HStack>
-                        </VStack>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity={0.3}>
-                          <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-                        </svg>
+                      <Text fontSize="md" fontWeight="medium" color="text.primary" lineClamp={1}>
+                        {recipe.name}
+                      </Text>
+                      <HStack gap={1} mt={1} flexWrap="wrap">
+                        <Badge colorPalette="blue" variant="subtle" fontSize="xs">{recipe.category}</Badge>
+                        <Badge colorPalette="cyan" variant="subtle" fontSize="xs">{recipe.type}</Badge>
+                        <Text fontSize="xs" color="text.muted">{recipe.cooking_time}分</Text>
                       </HStack>
                     </Box>
-                  ))
-                )}
-              </VStack>
+                  ))}
+                </SimpleGrid>
+              )}
             </Box>
           </Box>
         </Box>
