@@ -27,12 +27,12 @@ LOG_TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 S3_BUCKET="${AWS_S3_BUCKET:-}"
 
 # DB設定読み込み
-if [ -f "$PROJECT_DIR/.env" ]; then
-    POSTGRES_USER=$(grep '^POSTGRES_USER=' "$PROJECT_DIR/.env" | cut -d= -f2)
-    POSTGRES_DB=$(grep '^POSTGRES_DB=' "$PROJECT_DIR/.env" | cut -d= -f2)
-    REDIS_PASSWORD=$(grep '^REDIS_PASSWORD=' "$PROJECT_DIR/.env" | cut -d= -f2 || true)
+if [ -f "$PROJECT_DIR/.env.production" ]; then
+    POSTGRES_USER=$(grep '^POSTGRES_USER=' "$PROJECT_DIR/.env.production" | cut -d= -f2)
+    POSTGRES_DB=$(grep '^POSTGRES_DB=' "$PROJECT_DIR/.env.production" | cut -d= -f2)
+    REDIS_PASSWORD=$(grep '^REDIS_PASSWORD=' "$PROJECT_DIR/.env.production" | cut -d= -f2 || true)
 else
-    echo "[$LOG_TIMESTAMP] ERROR: .env ファイルが見つかりません: $PROJECT_DIR/.env"
+    echo "[$LOG_TIMESTAMP] ERROR: .env.production ファイルが見つかりません: $PROJECT_DIR/.env.production" >&2
     exit 1
 fi
 
