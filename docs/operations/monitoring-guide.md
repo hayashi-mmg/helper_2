@@ -401,6 +401,52 @@ groups:
           severity: critical
         annotations:
           summary: "Promtailログ転送サービスがダウン"
+
+      # --- ログパイプライン健全性監視 ---
+      - alert: PromtailTargetDown
+        expr: promtail_targets_active_total < 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Promtail収集ターゲット減少: {{ $value }}個（期待: 5+）"
+
+      - alert: LokiIngestionDrop
+        expr: |
+          rate(loki_distributor_bytes_received_total[5m]) == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Lokiへのログインジェストが10分間停止"
+
+      - alert: LokiIngestionSpike
+        expr: |
+          rate(loki_distributor_bytes_received_total[5m]) > 3 * avg_over_time(rate(loki_distributor_bytes_received_total[5m])[1h:5m])
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Lokiインジェスト率が通常の3倍を超過"
+
+      - alert: LokiStorageHigh
+        expr: |
+          (node_filesystem_size_bytes{mountpoint="/loki"} - node_filesystem_avail_bytes{mountpoint="/loki"})
+          / node_filesystem_size_bytes{mountpoint="/loki"} * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Lokiストレージ使用率が80%超: {{ $value }}%"
+
+      - alert: LogGapDetected
+        expr: |
+          time() - max(timestamp(count_over_time({job=~"app|nginx|security"}[1m]))) > 600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ログ欠損の可能性: {{ $labels.job }}のログが10分以上発生なし"
 ```
 
 #### 3. 情報アラート（日次確認）
@@ -435,6 +481,9 @@ groups:
 - [ ] WebSocket接続状況確認
 - [ ] ディスク使用量確認
 - [ ] Loki/Promtailサービス稼働確認
+- [ ] Promtailターゲット数が期待値か確認（`curl http://localhost:9080/targets`）
+- [ ] Lokiインジェスト率の異常なし確認
+- [ ] ログバックアップ成功通知の確認
 - [ ] ログ完全性検証バッチの実行結果確認
 - [ ] 未対応コンプライアンス請求の確認（期限切れチェック）
 
@@ -615,6 +664,25 @@ docker-compose -f docker-compose.prod.yml restart loki promtail
 
 # Lokiデータソース接続テスト（Grafana経由）
 curl -u admin:$GRAFANA_PASSWORD http://localhost:3001/api/datasources/proxy/uid/loki/loki/api/v1/labels
+
+# --- ログパイプライン健全性診断 ---
+# Promtailアクティブターゲット数確認
+curl -s http://localhost:9080/targets | jq '.[] | length'
+
+# Lokiインジェスト率確認（bytes/sec）
+curl -s http://localhost:3100/metrics | grep loki_distributor_bytes_received_total
+
+# Lokiチャンク数確認
+curl -s http://localhost:3100/metrics | grep loki_ingester_chunks_stored_total
+
+# LokiストレージWAL使用量確認
+du -sh /var/lib/docker/volumes/*loki*/_data/wal/
+
+# 各ジョブの最新ログタイムスタンプ確認（ログ欠損検知）
+for job in app nginx security postgres; do
+    echo -n "$job: "
+    curl -s "http://localhost:3100/loki/api/v1/query?query={job=\"$job\"}&limit=1" | jq -r '.data.result[0].values[0][0] // "NO DATA"'
+done
 ```
 
 #### 2. Grafanaダッシュボード表示エラー

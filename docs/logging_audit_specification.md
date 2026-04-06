@@ -1848,11 +1848,102 @@ ORDER BY deadline_at ASC;
 | タスク | 詳細 |
 |-------|------|
 | 日次チェーンハッシュバッチ | 完全性検証の自動化 |
-| アーカイブバッチ処理 | Warm/Coldティアへの移行 |
+| 日次ログバックアップ | 運用/監査/コンプライアンスログの日次バックアップ |
+| 月次アーカイブバッチ処理 | Warm/Coldティアへの自動移行（下記スクリプト参照） |
 | 自動削除バッチ処理 | 保持期間超過データの削除 |
 | 削除証跡記録 | コンプライアンスログへの記録 |
-| ログシステム監視 | Loki/Promtail自体のヘルスチェック |
+| ログシステム監視 | Loki/Promtail自体のヘルスチェック + パイプライン健全性 |
+| バックアップ成否通知 | Slack/Email による自動通知 |
 | 運用手順書整備 | 検索・調査・監査対応手順 |
+
+#### Phase E 補足: Warm→Cold 自動アーカイブスクリプト
+
+月次で実行し、Warm ティア（31-90日）のデータを圧縮アーカイブし、Cold ティア（90日-3年）のデータを暗号化してS3 Glacierにアップロードする。
+
+```bash
+#!/bin/bash
+# scripts/archive-logs.sh - 月次ログアーカイブ
+set -euo pipefail
+
+ARCHIVE_DIR="/opt/home-helper-system/log-archives"
+DATE=$(date +%Y%m%d)
+MONTH=$(date -d "31 days ago" +%Y-%m)
+COLD_DATE=$(date -d "90 days ago" +%Y-%m-%d)
+ARCHIVE_KEY="/opt/home-helper-system/.archive-key"
+S3_BUCKET="${AWS_S3_BUCKET:-helper-system-backups}"
+LOG_FILE="/var/log/helper-archive.log"
+TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+
+mkdir -p "$ARCHIVE_DIR"/{warm,cold}
+
+echo "[$TIMESTAMP] ログアーカイブ開始" >> "$LOG_FILE"
+
+cd /opt/home-helper-system
+
+# ===== Warm ティア: 31日超過分をCSV+gzip圧縮 =====
+echo "[$TIMESTAMP] Warm ティアアーカイブ処理中..." >> "$LOG_FILE"
+
+# data_access_logs: 31日超過 → Warmアーカイブ
+docker compose -f docker-compose.prod.yml exec -T postgres \
+    psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+    "COPY (SELECT * FROM data_access_logs WHERE created_at < CURRENT_DATE - INTERVAL '31 days' AND created_at >= '$COLD_DATE') TO STDOUT WITH CSV HEADER" \
+    | gzip > "$ARCHIVE_DIR/warm/data_access_logs_${MONTH}.csv.gz"
+
+# compliance_logs: 31日超過 → Warmアーカイブ
+docker compose -f docker-compose.prod.yml exec -T postgres \
+    psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+    "COPY (SELECT * FROM compliance_logs WHERE created_at < CURRENT_DATE - INTERVAL '31 days' AND created_at >= '$COLD_DATE') TO STDOUT WITH CSV HEADER" \
+    | gzip > "$ARCHIVE_DIR/warm/compliance_logs_${MONTH}.csv.gz"
+
+# audit_logs: 31日超過 → Warmアーカイブ
+docker compose -f docker-compose.prod.yml exec -T postgres \
+    psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+    "COPY (SELECT * FROM audit_logs WHERE created_at < CURRENT_DATE - INTERVAL '31 days' AND created_at >= '$COLD_DATE') TO STDOUT WITH CSV HEADER" \
+    | gzip > "$ARCHIVE_DIR/warm/audit_logs_${MONTH}.csv.gz"
+
+# ===== Cold ティア: 90日超過分を暗号化アーカイブ =====
+echo "[$TIMESTAMP] Cold ティアアーカイブ処理中..." >> "$LOG_FILE"
+
+for warmfile in "$ARCHIVE_DIR"/warm/*_$(date -d "90 days ago" +%Y-%m).csv.gz; do
+    [ -f "$warmfile" ] || continue
+    BASENAME=$(basename "$warmfile")
+    openssl enc -aes-256-cbc -salt \
+        -in "$warmfile" \
+        -out "$ARCHIVE_DIR/cold/${BASENAME}.enc" \
+        -pass file:"$ARCHIVE_KEY"
+    echo "[$TIMESTAMP] Cold暗号化完了: $BASENAME" >> "$LOG_FILE"
+done
+
+# ===== S3 Glacierへのアップロード =====
+if command -v aws &> /dev/null && [ -n "$S3_BUCKET" ]; then
+    # Warmアーカイブ → S3 Standard
+    aws s3 sync "$ARCHIVE_DIR/warm/" "s3://${S3_BUCKET}/backups/logs/audit/" \
+        --storage-class STANDARD --quiet
+
+    # Coldアーカイブ → S3 Glacier
+    aws s3 sync "$ARCHIVE_DIR/cold/" "s3://${S3_BUCKET}/backups/logs/compliance/" \
+        --storage-class GLACIER --quiet
+
+    echo "[$TIMESTAMP] S3アップロード完了" >> "$LOG_FILE"
+fi
+
+# ===== アーカイブ済みデータの検証 =====
+WARM_COUNT=$(ls -1 "$ARCHIVE_DIR/warm/"*.csv.gz 2>/dev/null | wc -l)
+COLD_COUNT=$(ls -1 "$ARCHIVE_DIR/cold/"*.enc 2>/dev/null | wc -l)
+TOTAL_SIZE=$(du -sh "$ARCHIVE_DIR" | cut -f1)
+
+echo "[$TIMESTAMP] アーカイブ完了 - Warm: ${WARM_COUNT}件, Cold: ${COLD_COUNT}件, 合計: $TOTAL_SIZE" >> "$LOG_FILE"
+
+# 成功通知
+/opt/home-helper-system/scripts/backup-notify.sh success \
+    "月次ログアーカイブ" "Warm: ${WARM_COUNT}件, Cold: ${COLD_COUNT}件, サイズ: $TOTAL_SIZE"
+```
+
+**Cronジョブ設定**:
+```bash
+# 毎月1日午前4時に実行
+0 4 1 * * /opt/home-helper-system/scripts/archive-logs.sh >> /var/log/helper-archive.log 2>&1
+```
 
 ---
 

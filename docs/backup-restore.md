@@ -19,7 +19,10 @@
 | アップロードファイル | 日次 | 30日 | 高 |
 | 環境設定ファイル | 変更時 | 永久 | 高 |
 | Redisデータ | 日次 | 7日 | 中 |
-| アプリケーションログ | 週次 | 90日 | 中 |
+| アプリケーションログ（運用系） | 日次 | 90日 | 中 |
+| 監査ログ（DB: audit_logs） | 日次 | 6ヶ月 | 高 |
+| データアクセスログ（DB: data_access_logs） | 日次 | 3年 | 最高 |
+| コンプライアンスログ（DB: compliance_logs） | 日次 | 3年 | 最高 |
 
 ### バックアップ保存先
 
@@ -50,12 +53,17 @@ docker compose -f docker-compose.prod.yml ps backup
 # Cronジョブ追加
 crontab -e
 
-# 毎日午前2時にバックアップ実行
+# 毎日午前2時にDBバックアップ実行
 0 2 * * * /opt/helper-system/scripts/backup.sh >> /var/log/helper-backup.log 2>&1
 
-# 毎週日曜日午前3時にログバックアップ
-0 3 * * 0 tar czf /backups/logs_$(date +\%Y\%m\%d).tar.gz /opt/helper-system/backend/logs
+# 毎日午前2時30分にログバックアップ実行（日次: RPO 24h対応）
+30 2 * * * /opt/helper-system/scripts/backup-logs.sh >> /var/log/helper-log-backup.log 2>&1
+
+# 毎月1日午前4時にWarm→Coldアーカイブ移行
+0 4 1 * * /opt/helper-system/scripts/archive-logs.sh >> /var/log/helper-archive.log 2>&1
 ```
+
+> **変更履歴**: ログバックアップを週次から**日次**に変更。RPO 24時間目標との整合性を確保するため。
 
 ### バックアップスクリプトの確認
 
@@ -309,10 +317,88 @@ aws s3api put-bucket-lifecycle-configuration \
 {
   "Rules": [
     {
-      "Id": "DeleteOldBackups",
+      "Id": "DeleteOldDBBackups",
       "Status": "Enabled",
       "Filter": {
-        "Prefix": "backups/"
+        "Prefix": "backups/db/"
+      },
+      "Expiration": {
+        "Days": 30
+      }
+    },
+    {
+      "Id": "DeleteOldOperationalLogs",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "backups/logs/operational/"
+      },
+      "Expiration": {
+        "Days": 90
+      }
+    },
+    {
+      "Id": "ArchiveAuditLogs",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "backups/logs/audit/"
+      },
+      "Transitions": [
+        {
+          "Days": 90,
+          "StorageClass": "GLACIER"
+        }
+      ],
+      "Expiration": {
+        "Days": 180
+      }
+    },
+    {
+      "Id": "ArchiveComplianceLogs",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "backups/logs/compliance/"
+      },
+      "Transitions": [
+        {
+          "Days": 90,
+          "StorageClass": "GLACIER"
+        }
+      ],
+      "Expiration": {
+        "Days": 1095
+      }
+    },
+    {
+      "Id": "ArchiveDataAccessLogs",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "backups/logs/data-access/"
+      },
+      "Transitions": [
+        {
+          "Days": 90,
+          "StorageClass": "GLACIER"
+        }
+      ],
+      "Expiration": {
+        "Days": 1095
+      }
+    },
+    {
+      "Id": "DeleteOldRedisBackups",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "backups/redis/"
+      },
+      "Expiration": {
+        "Days": 7
+      }
+    },
+    {
+      "Id": "DeleteOldUploadBackups",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "backups/uploads/"
       },
       "Expiration": {
         "Days": 30
@@ -322,6 +408,13 @@ aws s3api put-bucket-lifecycle-configuration \
 }
 ```
 
+> **S3保持期間の根拠**:
+> - DB/アップロード: 30日（日次バックアップで十分な世代管理）
+> - 運用ログ: 90日（障害調査目的）
+> - 監査ログ: 6ヶ月（内部統制要件）
+> - コンプライアンス/データアクセスログ: **3年（1095日）**（改正個人情報保護法 第25条 記録保管義務）
+> - 90日経過後はS3 Glacierに移行しストレージ費用を削減
+
 ### バックアップスクリプトへのS3統合
 
 ```bash
@@ -330,6 +423,136 @@ export AWS_S3_BUCKET=helper-system-backups
 
 # バックアップスクリプト実行 (自動的にS3にアップロード)
 ./scripts/backup.sh
+```
+
+---
+
+## ログバックアップスクリプト
+
+### 日次ログバックアップ (`scripts/backup-logs.sh`)
+
+```bash
+#!/bin/bash
+# backup-logs.sh - 日次ログバックアップ
+set -euo pipefail
+
+BACKUP_DIR="/backups/logs"
+DATE=$(date +%Y%m%d)
+TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+LOG_FILE="/var/log/helper-log-backup.log"
+S3_BUCKET="${AWS_S3_BUCKET:-helper-system-backups}"
+
+mkdir -p "$BACKUP_DIR"/{operational,audit,compliance,data-access}
+
+echo "[$TIMESTAMP] ログバックアップ開始" >> "$LOG_FILE"
+
+# 1. アプリケーション運用ログ（差分: 前回バックアップ以降）
+LAST_BACKUP_MARKER="/backups/.last-log-backup"
+FIND_OPTS=""
+if [ -f "$LAST_BACKUP_MARKER" ]; then
+    FIND_OPTS="-newer $LAST_BACKUP_MARKER"
+fi
+
+tar czf "$BACKUP_DIR/operational/app_logs_${DATE}.tar.gz" \
+    $(find /opt/helper-system/backend/logs -name "*.log" $FIND_OPTS 2>/dev/null) \
+    2>/dev/null || true
+
+# 2. 監査ログ（DB: audit_logs テーブル）
+cd /opt/helper-system
+docker compose -f docker-compose.prod.yml exec -T postgres \
+    psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+    "COPY (SELECT * FROM audit_logs WHERE created_at >= CURRENT_DATE - INTERVAL '1 day') TO STDOUT WITH CSV HEADER" \
+    | gzip > "$BACKUP_DIR/audit/audit_logs_${DATE}.csv.gz"
+
+# 3. データアクセスログ（DB: data_access_logs テーブル）
+docker compose -f docker-compose.prod.yml exec -T postgres \
+    psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+    "COPY (SELECT * FROM data_access_logs WHERE created_at >= CURRENT_DATE - INTERVAL '1 day') TO STDOUT WITH CSV HEADER" \
+    | gzip > "$BACKUP_DIR/data-access/data_access_logs_${DATE}.csv.gz"
+
+# 4. コンプライアンスログ（DB: compliance_logs テーブル）
+docker compose -f docker-compose.prod.yml exec -T postgres \
+    psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+    "COPY (SELECT * FROM compliance_logs WHERE created_at >= CURRENT_DATE - INTERVAL '1 day') TO STDOUT WITH CSV HEADER" \
+    | gzip > "$BACKUP_DIR/compliance/compliance_logs_${DATE}.csv.gz"
+
+# タイムスタンプマーカー更新
+touch "$LAST_BACKUP_MARKER"
+
+# S3アップロード（設定されている場合）
+if command -v aws &> /dev/null && [ -n "$S3_BUCKET" ]; then
+    aws s3 sync "$BACKUP_DIR/" "s3://${S3_BUCKET}/backups/logs/" --quiet
+fi
+
+# バックアップサイズ集計
+TOTAL_SIZE=$(du -sh "$BACKUP_DIR" | cut -f1)
+echo "[$TIMESTAMP] ログバックアップ完了 - 合計サイズ: $TOTAL_SIZE" >> "$LOG_FILE"
+
+# 成功通知送信
+/opt/helper-system/scripts/backup-notify.sh success "ログバックアップ" "$TOTAL_SIZE"
+```
+
+### バックアップ通知スクリプト (`scripts/backup-notify.sh`)
+
+```bash
+#!/bin/bash
+# backup-notify.sh - バックアップ成否通知
+set -euo pipefail
+
+STATUS="$1"        # success | failure
+TARGET="$2"        # バックアップ対象名
+DETAIL="${3:-}"     # 追加情報（サイズ、エラーメッセージ等）
+TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+
+SLACK_WEBHOOK="${SLACK_BACKUP_WEBHOOK_URL:-}"
+NOTIFICATION_LOG="/var/log/helper-backup-notify.log"
+
+# ログ記録
+echo "[$TIMESTAMP] $STATUS: $TARGET - $DETAIL" >> "$NOTIFICATION_LOG"
+
+# Slack通知
+if [ -n "$SLACK_WEBHOOK" ]; then
+    if [ "$STATUS" = "success" ]; then
+        EMOJI="white_check_mark"
+        COLOR="#36a64f"
+        TEXT="バックアップ成功: $TARGET ($DETAIL)"
+    else
+        EMOJI="x"
+        COLOR="#ff0000"
+        TEXT="バックアップ失敗: $TARGET - $DETAIL"
+    fi
+
+    PAYLOAD=$(cat <<EOF
+{
+  "attachments": [{
+    "color": "$COLOR",
+    "title": ":${EMOJI}: ${TEXT}",
+    "fields": [
+      {"title": "対象", "value": "$TARGET", "short": true},
+      {"title": "時刻", "value": "$TIMESTAMP", "short": true},
+      {"title": "詳細", "value": "$DETAIL", "short": false}
+    ]
+  }]
+}
+EOF
+)
+
+    curl -s -X POST -H 'Content-type: application/json' \
+        --data "$PAYLOAD" "$SLACK_WEBHOOK" > /dev/null 2>&1
+fi
+
+# メール通知（失敗時のみ）
+if [ "$STATUS" = "failure" ] && command -v mail &> /dev/null; then
+    echo "バックアップ失敗: $TARGET at $TIMESTAMP\n詳細: $DETAIL" | \
+        mail -s "[ALERT] バックアップ失敗: $TARGET" "${BACKUP_ALERT_EMAIL:-admin@example.com}"
+fi
+```
+
+**環境変数設定**:
+```bash
+# .env に追加
+SLACK_BACKUP_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+BACKUP_ALERT_EMAIL=admin@your-domain.com
 ```
 
 ---
@@ -382,14 +605,16 @@ docker compose -f docker-compose.prod.yml exec backend alembic upgrade head
 ## バックアップチェックリスト
 
 ### 日次
-- [ ] 自動バックアップが正常に実行されたか確認
+- [ ] 自動DBバックアップが正常に実行されたか確認
+- [ ] 自動ログバックアップが正常に実行されたか確認
 - [ ] バックアップファイルサイズが正常範囲か確認
 - [ ] S3アップロードが成功したか確認
+- [ ] Slack通知が正常に届いているか確認
 
 ### 週次
 - [ ] バックアップファイルの整合性確認
-- [ ] ログファイルのバックアップ
-- [ ] 古いバックアップの削除確認
+- [ ] 古いバックアップの削除確認（ローカルディスク）
+- [ ] S3ライフサイクル削除の正常動作確認
 
 ### 月次
 - [ ] テスト環境でリストア検証

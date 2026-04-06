@@ -448,12 +448,29 @@ docker-compose -f docker-compose.prod.yml logs --since="2025-07-13T10:00:00" bac
 Docker Composeでログローテーション設定済み:
 
 ```yaml
+# Nginx / Backend（高トラフィックサービス）
 logging:
   driver: "json-file"
   options:
-    max-size: "10m"      # 最大10MB
-    max-file: "3"        # 最大3ファイル保持
+    max-size: "50m"      # 最大50MB
+    max-file: "5"        # 最大5ファイル保持（合計250MB/サービス）
+
+# PostgreSQL
+logging:
+  driver: "json-file"
+  options:
+    max-size: "20m"      # 最大20MB
+    max-file: "5"        # 最大5ファイル保持（合計100MB）
+
+# Frontend / Redis / Loki / Promtail（低トラフィックサービス）
+logging:
+  driver: "json-file"
+  options:
+    max-size: "20m"      # 最大20MB
+    max-file: "3"        # 最大3ファイル保持（合計60MB/サービス）
 ```
+
+> **容量設計の根拠**: Promtailがログを収集する前にDockerがファイルをローテーションしてログが消失するリスクを防ぐため、高トラフィックサービス（Nginx、Backend）は50MB×5ファイル（250MB）に拡大。VPS全体のログストレージ上限は約750MBを想定。
 
 手動でのログクリア:
 

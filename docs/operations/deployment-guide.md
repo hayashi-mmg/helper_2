@@ -250,7 +250,7 @@ curl -f http://localhost:9090/api/v1/alerts
 ### 2. ログ監視設定
 
 ```bash
-# ログローテーション設定
+# ログローテーション設定（アプリケーションログ）
 sudo nano /etc/logrotate.d/home-helper-system
 
 # 内容:
@@ -266,6 +266,64 @@ sudo nano /etc/logrotate.d/home-helper-system
         docker-compose -f /opt/home-helper-system/docker-compose.prod.yml restart nginx
     endscript
 }
+```
+
+```bash
+# ログローテーション設定（Nginxホストログ）
+sudo nano /etc/logrotate.d/home-helper-nginx
+
+# 内容:
+/var/log/nginx/*.log {
+    daily
+    missingok
+    rotate 14
+    compress
+    delaycompress
+    notifempty
+    sharedscripts
+    postrotate
+        [ -f /var/run/nginx.pid ] && kill -USR1 $(cat /var/run/nginx.pid) 2>/dev/null || true
+    endscript
+}
+```
+
+```bash
+# ログローテーション設定（バックアップ関連ログ）
+sudo nano /etc/logrotate.d/home-helper-backup
+
+# 内容:
+/var/log/helper-backup.log
+/var/log/helper-log-backup.log
+/var/log/helper-archive.log
+/var/log/helper-backup-notify.log {
+    weekly
+    missingok
+    rotate 8
+    compress
+    delaycompress
+    notifempty
+}
+```
+
+#### Loki WALディレクトリのサイズ監視
+
+LokiのWAL（Write-Ahead Log）はディスクを圧迫する可能性がある。logrotateではなくcronで定期監視を行う。
+
+```bash
+# Loki WALサイズ監視スクリプト（scripts/check-loki-wal.sh）
+#!/bin/bash
+WAL_PATH="/var/lib/docker/volumes/*loki*/_data/wal"
+WAL_SIZE=$(du -sm $WAL_PATH 2>/dev/null | cut -f1)
+THRESHOLD_MB=2048  # 2GB
+
+if [ "${WAL_SIZE:-0}" -gt "$THRESHOLD_MB" ]; then
+    echo "[WARNING] Loki WAL size: ${WAL_SIZE}MB (threshold: ${THRESHOLD_MB}MB)"
+    /opt/home-helper-system/scripts/backup-notify.sh failure "Loki WAL容量警告" "${WAL_SIZE}MB超過"
+fi
+
+# cronジョブ追加:
+# 毎時Loki WALサイズチェック
+# 0 * * * * /opt/home-helper-system/scripts/check-loki-wal.sh >> /var/log/helper-loki-wal.log 2>&1
 ```
 
 ### 3. 自動バックアップ設定
