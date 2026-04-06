@@ -12,7 +12,7 @@
 #   ./scripts/backup.sh          # 全バックアップ実行
 #   ./scripts/backup.sh test     # バックアップ完全性テスト
 #
-# 依存: docker compose, gzip, (任意) aws cli
+# 依存: docker-compose, gzip, (任意) aws cli
 # =============================================================================
 set -euo pipefail
 
@@ -82,7 +82,7 @@ backup_postgres() {
 
     local dump_file="$db_backup_dir/backup_${POSTGRES_DB}_${TIMESTAMP}.sql.gz"
 
-    docker compose -f "$COMPOSE_FILE" exec -T db \
+    docker-compose -f "$COMPOSE_FILE" exec -T db \
         pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=plain \
         | gzip > "$dump_file"
 
@@ -112,18 +112,18 @@ backup_redis() {
         redis_auth="-a $REDIS_PASSWORD"
     fi
 
-    docker compose -f "$COMPOSE_FILE" exec -T redis \
+    docker-compose -f "$COMPOSE_FILE" exec -T redis \
         redis-cli $redis_auth BGSAVE 2>/dev/null || true
 
     # BGSAVE完了待ち（最大30秒）
     local retries=0
     while [ $retries -lt 15 ]; do
         local bgsave_status
-        bgsave_status=$(docker compose -f "$COMPOSE_FILE" exec -T redis \
+        bgsave_status=$(docker-compose -f "$COMPOSE_FILE" exec -T redis \
             redis-cli $redis_auth LASTSAVE 2>/dev/null || echo "")
         sleep 2
         local new_status
-        new_status=$(docker compose -f "$COMPOSE_FILE" exec -T redis \
+        new_status=$(docker-compose -f "$COMPOSE_FILE" exec -T redis \
             redis-cli $redis_auth LASTSAVE 2>/dev/null || echo "")
         if [ "$bgsave_status" != "$new_status" ] || [ $retries -gt 0 ]; then
             break
@@ -133,7 +133,7 @@ backup_redis() {
 
     # dump.rdb をコピー
     local container_name
-    container_name=$(docker compose -f "$COMPOSE_FILE" ps -q redis 2>/dev/null || true)
+    container_name=$(docker-compose -f "$COMPOSE_FILE" ps -q redis 2>/dev/null || true)
     if [ -n "$container_name" ]; then
         docker cp "${container_name}:/data/dump.rdb" \
             "$redis_backup_dir/redis_${DATE}.rdb" 2>/dev/null || {
