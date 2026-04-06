@@ -2,6 +2,7 @@
 set -euo pipefail
 
 COMPOSE_FILE="docker-compose.prod.yml"
+TRAEFIK_COMPOSE_FILE="traefik/docker-compose.yml"
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$PROJECT_DIR"
 
@@ -36,6 +37,25 @@ check_prerequisites() {
     ok "前提条件チェック完了"
 }
 
+# --- Traefikネットワーク・起動 ---
+ensure_traefik() {
+    # proxy ネットワーク作成（存在しない場合）
+    if ! docker network inspect proxy &>/dev/null; then
+        info "proxy ネットワークを作成中..."
+        docker network create proxy
+        ok "proxy ネットワーク作成完了"
+    fi
+
+    # Traefik起動確認
+    if ! docker ps --format '{{.Names}}' | grep -q '^traefik$'; then
+        info "Traefikを起動中..."
+        docker compose -f "$TRAEFIK_COMPOSE_FILE" up -d
+        ok "Traefik起動完了"
+    else
+        ok "Traefikは既に稼働中です"
+    fi
+}
+
 # --- 初回セットアップ ---
 do_init() {
     info "=== 初回デプロイセットアップ ==="
@@ -63,19 +83,8 @@ do_init() {
         ok ".env ファイルは既に存在します"
     fi
 
-    # SSL証明書チェック
-    if [ ! -f nginx/ssl/fullchain.pem ] || [ ! -f nginx/ssl/privkey.pem ]; then
-        warn "SSL証明書が見つかりません。以下のコマンドで取得してください:"
-        echo ""
-        echo "  sudo certbot certonly --standalone -d yourdomain.com"
-        echo "  sudo cp /etc/letsencrypt/live/yourdomain.com/fullchain.pem nginx/ssl/"
-        echo "  sudo cp /etc/letsencrypt/live/yourdomain.com/privkey.pem nginx/ssl/"
-        echo "  chmod 600 nginx/ssl/*.pem"
-        echo ""
-        warn "SSL証明書を配置後、再度 ./deploy.sh init を実行してください"
-        return 1
-    fi
-    ok "SSL証明書を確認しました"
+    # Traefik起動
+    ensure_traefik
 
     # イメージビルド
     info "Dockerイメージをビルド中..."
@@ -129,6 +138,9 @@ do_update() {
         exit 1
     fi
 
+    # Traefik確認
+    ensure_traefik
+
     # 最新コード取得
     info "最新コードを取得中..."
     git pull origin "$(git branch --show-current)"
@@ -148,7 +160,6 @@ do_update() {
     info "サービスを再起動中..."
     docker compose -f "$COMPOSE_FILE" up -d --no-deps --build backend
     docker compose -f "$COMPOSE_FILE" up -d --no-deps --build frontend
-    docker compose -f "$COMPOSE_FILE" up -d --no-deps --build nginx
     ok "再起動完了"
 
     sleep 5
@@ -160,6 +171,10 @@ do_update() {
 
 # --- ステータス確認 ---
 do_status() {
+    info "=== Traefik状態 ==="
+    docker ps --filter "name=traefik" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
+    echo ""
+
     info "=== サービス状態 ==="
     docker compose -f "$COMPOSE_FILE" ps
     echo ""
@@ -169,7 +184,6 @@ do_status() {
         echo ""
         ok "Backend API: 正常"
     else
-        # SSL経由を試行
         if curl -sfk https://localhost/api/v1/health 2>/dev/null; then
             echo ""
             ok "Backend API: 正常 (HTTPS)"
@@ -186,7 +200,9 @@ do_status() {
 # --- ログ確認 ---
 do_logs() {
     local service="${1:-}"
-    if [ -n "$service" ]; then
+    if [ "$service" = "traefik" ]; then
+        docker logs -f --tail=100 traefik
+    elif [ -n "$service" ]; then
         docker compose -f "$COMPOSE_FILE" logs -f --tail=100 "$service"
     else
         docker compose -f "$COMPOSE_FILE" logs -f --tail=100
@@ -217,9 +233,10 @@ do_backup() {
 
 # --- 停止 ---
 do_stop() {
-    info "全サービスを停止中..."
+    info "アプリサービスを停止中..."
     docker compose -f "$COMPOSE_FILE" down
-    ok "全サービス停止完了"
+    ok "アプリサービス停止完了"
+    warn "Traefikは停止していません。停止する場合: docker compose -f $TRAEFIK_COMPOSE_FILE down"
 }
 
 # --- ヘルプ ---
@@ -229,17 +246,18 @@ show_usage() {
     echo "使い方: ./deploy.sh <コマンド> [オプション]"
     echo ""
     echo "コマンド:"
-    echo "  init              初回セットアップ (環境変数生成、ビルド、マイグレーション、起動)"
+    echo "  init              初回セットアップ (環境変数生成、Traefik起動、ビルド、マイグレーション、起動)"
     echo "  update            アップデートデプロイ (pull、ビルド、マイグレーション、再起動)"
     echo "  status            サービス状態・ヘルスチェック確認"
-    echo "  logs [service]    ログ確認 (service省略で全サービス)"
+    echo "  logs [service]    ログ確認 (service省略で全サービス、traefik指定でTraefikログ)"
     echo "  backup            データベースバックアップ"
-    echo "  stop              全サービス停止"
+    echo "  stop              アプリサービス停止 (Traefikは維持)"
     echo ""
     echo "例:"
     echo "  ./deploy.sh init            # 初回セットアップ"
     echo "  ./deploy.sh update          # コード更新後のデプロイ"
     echo "  ./deploy.sh logs backend    # バックエンドログ確認"
+    echo "  ./deploy.sh logs traefik    # Traefikログ確認"
     echo "  ./deploy.sh backup          # DBバックアップ"
 }
 

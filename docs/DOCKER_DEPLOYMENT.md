@@ -24,26 +24,30 @@ Task 12.2: Docker本番イメージビルドとデプロイ手順
 ### アーキテクチャ
 
 ```
-┌──────────────────────────────────────────┐
-│           Nginx (Reverse Proxy)          │
-│          Port 80/443 (SSL/TLS)           │
-└─────────┬────────────────────────────────┘
-          │
-     ┌────┴────┐
-     │         │
-┌────▼────┐ ┌─▼──────────┐
-│Frontend │ │  Backend   │
-│ (Nginx) │ │ (FastAPI)  │
-│Port 3000│ │ Port 8000  │
-└─────────┘ └──┬─────────┘
-                │
-        ┌───────┴───────┐
-        │               │
-   ┌────▼─────┐   ┌────▼────┐
-   │PostgreSQL│   │  Redis  │
-   │Port 5432 │   │Port 6379│
-   └──────────┘   └─────────┘
+        ┌──────────────────────────────────────────┐
+        │     Traefik (Reverse Proxy + Auto SSL)   │
+        │       Port 80/443 (Let's Encrypt)        │
+        │     [traefik/docker-compose.yml]          │
+        └─────────┬────────────────────────────────┘
+                  │  proxy ネットワーク (外部)
+             ┌────┴────┐
+             │         │
+        ┌────▼────┐ ┌─▼──────────┐
+        │Frontend │ │  Backend   │
+        │ (Nginx) │ │ (FastAPI)  │
+        │Port 3000│ │ Port 8000  │
+        └────┬────┘ └──┬─────────┘
+             │         │  app_network (内部)
+             │  ┌──────┴───────┐
+             │  │              │
+        ┌────▼──▼─────┐  ┌────▼────┐
+        │ PostgreSQL  │  │  Redis  │
+        │ Port 5432   │  │Port 6379│
+        └─────────────┘  └─────────┘
 ```
+
+Traefikは別docker-composeファイルで管理され、複数プロジェクトで共有可能。
+アプリケーションサービスはDockerラベルでルーティングを定義。
 
 ### マルチステージビルドの利点
 
@@ -181,22 +185,27 @@ chmod 600 frontend/.env.production
 chmod 600 .env
 ```
 
-### 4. SSL証明書設定
+### 4. Traefikセットアップ（リバースプロキシ + 自動SSL）
+
+TraefikはLet's Encrypt証明書を自動取得・更新します。手動でのSSL設定は不要です。
 
 ```bash
-# Let's Encrypt証明書取得
-sudo apt install certbot -y
+# proxyネットワーク作成
+docker network create proxy
 
-# 証明書取得（Nginxサービス停止中に実行）
-sudo certbot certonly --standalone -d yourdomain.com -d www.yourdomain.com
+# Traefik起動
+cd traefik
+docker compose up -d
+cd ..
 
-# 証明書を適切な場所にコピー
-sudo mkdir -p nginx/ssl
-sudo cp /etc/letsencrypt/live/yourdomain.com/fullchain.pem nginx/ssl/
-sudo cp /etc/letsencrypt/live/yourdomain.com/privkey.pem nginx/ssl/
-sudo chown $USER:$USER nginx/ssl/*
-chmod 600 nginx/ssl/*
+# ACME証明書取得の確認
+docker logs traefik
 ```
+
+Traefikの設定ファイル:
+- `traefik/docker-compose.yml` — Traefikコンテナ定義
+- `traefik/traefik.yml` — 静的設定（エントリポイント、ACME、プロバイダ）
+- `traefik/dynamic/middlewares.yml` — ミドルウェア（レート制限、セキュリティヘッダー、圧縮）
 
 ---
 
@@ -296,35 +305,18 @@ git diff HEAD~1 backend/.env.example
 git diff HEAD~1 frontend/.env.example
 
 # 3. イメージ再ビルド
-docker-compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml build
 
 # 4. データベースマイグレーション（必要な場合）
-docker-compose -f docker-compose.prod.yml run --rm backend alembic upgrade head
+docker compose -f docker-compose.prod.yml run --rm backend alembic upgrade head
 
 # 5. ローリングアップデート
-docker-compose -f docker-compose.prod.yml up -d --no-deps --build backend
-docker-compose -f docker-compose.prod.yml up -d --no-deps --build frontend
+docker compose -f docker-compose.prod.yml up -d --no-deps --build backend
+docker compose -f docker-compose.prod.yml up -d --no-deps --build frontend
 
 # 6. ヘルスチェック
-docker-compose -f docker-compose.prod.yml ps
-curl -f http://localhost/health || echo "Health check failed"
-```
-
-### ブルーグリーンデプロイ（推奨）
-
-```bash
-# 1. 新バージョンを別名でビルド
-docker-compose -f docker-compose.prod.yml build
-
-# 2. 新バージョンを別ポートで起動
-# docker-compose.prod-green.yml を作成してポート変更
-
-# 3. ヘルスチェック
-curl -f http://localhost:8080/health
-
-# 4. Nginxの向き先を切り替え
-
-# 5. 旧バージョン停止
+docker compose -f docker-compose.prod.yml ps
+curl -f https://localhost/api/v1/health -k || echo "Health check failed"
 ```
 
 ---
@@ -448,7 +440,7 @@ docker-compose -f docker-compose.prod.yml logs --since="2025-07-13T10:00:00" bac
 Docker Composeでログローテーション設定済み:
 
 ```yaml
-# Nginx / Backend（高トラフィックサービス）
+# Backend（高トラフィックサービス）
 logging:
   driver: "json-file"
   options:
@@ -470,7 +462,7 @@ logging:
     max-file: "3"        # 最大3ファイル保持（合計60MB/サービス）
 ```
 
-> **容量設計の根拠**: Promtailがログを収集する前にDockerがファイルをローテーションしてログが消失するリスクを防ぐため、高トラフィックサービス（Nginx、Backend）は50MB×5ファイル（250MB）に拡大。VPS全体のログストレージ上限は約750MBを想定。
+> **容量設計の根拠**: Promtailがログを収集する前にDockerがファイルをローテーションしてログが消失するリスクを防ぐため、高トラフィックサービス（Backend）は50MB×5ファイル（250MB）に拡大。Traefikは別docker-composeで管理（同設定）。VPS全体のログストレージ上限は約750MBを想定。
 
 手動でのログクリア:
 
@@ -767,5 +759,5 @@ curl -f http://localhost:9080/targets
 - [Docker Compose公式ドキュメント](https://docs.docker.com/compose/)
 - [FastAPI Deployment](https://fastapi.tiangolo.com/deployment/)
 - [Vite Production Build](https://vitejs.dev/guide/build.html)
-- [Nginx Configuration](https://nginx.org/en/docs/)
+- [Traefik Documentation](https://doc.traefik.io/traefik/)
 - [Let's Encrypt](https://letsencrypt.org/)

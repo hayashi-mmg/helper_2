@@ -2,46 +2,6 @@ version: "3.9"
 
 services:
   # ==============================
-  # Nginx リバースプロキシ
-  # ==============================
-  nginx:
-    build: ./nginx
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - certbot_webroot:/var/www/certbot:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-    depends_on:
-      backend:
-        condition: service_healthy
-      frontend:
-        condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - app_network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "50m"
-        max-file: "5"
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-
-  # ==============================
-  # Certbot (SSL証明書取得・更新)
-  # ==============================
-  certbot:
-    image: certbot/certbot
-    volumes:
-      - certbot_webroot:/var/www/certbot
-      - certbot_certs:/etc/letsencrypt
-    networks:
-      - app_network
-
-  # ==============================
   # Backend (FastAPI + Gunicorn)
   # ==============================
   backend:
@@ -69,6 +29,7 @@ services:
     restart: unless-stopped
     networks:
       - app_network
+      - proxy
     logging:
       driver: "json-file"
       options:
@@ -85,6 +46,31 @@ services:
       timeout: 10s
       start_period: 40s
       retries: 3
+    labels:
+      - "traefik.enable=true"
+      # --- 認証エンドポイント (レート制限: 3r/s) ---
+      - "traefik.http.routers.helper5-auth.rule=Host(`h.kokoro-shift.jp`) && PathPrefix(`/api/v1/auth/`)"
+      - "traefik.http.routers.helper5-auth.entrypoints=websecure"
+      - "traefik.http.routers.helper5-auth.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.helper5-auth.priority=30"
+      - "traefik.http.routers.helper5-auth.middlewares=rate-limit-auth@file,security-headers@file,gzip-compress@file,request-body-limit@file"
+      - "traefik.http.routers.helper5-auth.service=helper5-backend"
+      # --- APIエンドポイント (レート制限: 10r/s) ---
+      - "traefik.http.routers.helper5-api.rule=Host(`h.kokoro-shift.jp`) && PathPrefix(`/api/`)"
+      - "traefik.http.routers.helper5-api.entrypoints=websecure"
+      - "traefik.http.routers.helper5-api.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.helper5-api.priority=20"
+      - "traefik.http.routers.helper5-api.middlewares=rate-limit-api@file,security-headers@file,gzip-compress@file,request-body-limit@file"
+      - "traefik.http.routers.helper5-api.service=helper5-backend"
+      # --- WebSocket ---
+      - "traefik.http.routers.helper5-ws.rule=Host(`h.kokoro-shift.jp`) && PathPrefix(`/ws/`)"
+      - "traefik.http.routers.helper5-ws.entrypoints=websecure"
+      - "traefik.http.routers.helper5-ws.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.helper5-ws.priority=20"
+      - "traefik.http.routers.helper5-ws.middlewares=security-headers@file"
+      - "traefik.http.routers.helper5-ws.service=helper5-backend"
+      # --- バックエンドサービス定義 ---
+      - "traefik.http.services.helper5-backend.loadbalancer.server.port=8000"
 
   # ==============================
   # Frontend (Nginx + 静的ファイル)
@@ -100,6 +86,7 @@ services:
     restart: unless-stopped
     networks:
       - app_network
+      - proxy
     logging:
       driver: "json-file"
       options:
@@ -115,6 +102,16 @@ services:
       timeout: 10s
       start_period: 30s
       retries: 5
+    labels:
+      - "traefik.enable=true"
+      # --- フロントエンド (catch-all, 最低優先度) ---
+      - "traefik.http.routers.helper5-frontend.rule=Host(`h.kokoro-shift.jp`)"
+      - "traefik.http.routers.helper5-frontend.entrypoints=websecure"
+      - "traefik.http.routers.helper5-frontend.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.helper5-frontend.priority=10"
+      - "traefik.http.routers.helper5-frontend.middlewares=security-headers@file,gzip-compress@file"
+      - "traefik.http.routers.helper5-frontend.service=helper5-frontend"
+      - "traefik.http.services.helper5-frontend.loadbalancer.server.port=3000"
 
   # ==============================
   # PostgreSQL データベース
@@ -179,9 +176,9 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  certbot_webroot:
-  certbot_certs:
 
 networks:
   app_network:
     driver: bridge
+  proxy:
+    external: true
