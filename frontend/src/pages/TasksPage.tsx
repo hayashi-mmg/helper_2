@@ -10,6 +10,7 @@ import LoadingState from '@/components/ui/LoadingState'
 import EmptyState from '@/components/ui/EmptyState'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { toaster } from '@/components/ui/toaster'
+import { toLocalDateString } from '@/utils/date'
 
 const priorityColor: Record<string, string> = {
   high: 'red',
@@ -57,14 +58,14 @@ const emptyForm = {
   task_type: 'cooking',
   priority: 'medium',
   estimated_minutes: '',
-  scheduled_date: new Date().toISOString().split('T')[0],
+  scheduled_date: toLocalDateString(),
 }
 
 export default function TasksPage() {
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState(emptyForm)
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
+  const [selectedDate, setSelectedDate] = useState(toLocalDateString())
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const user = useAuthStore((state) => state.user)
   const queryClient = useQueryClient()

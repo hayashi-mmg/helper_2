@@ -11,6 +11,7 @@ import Select from '@/components/ui/Select'
 import LoadingState from '@/components/ui/LoadingState'
 import EmptyState from '@/components/ui/EmptyState'
 import { toaster } from '@/components/ui/toaster'
+import { toLocalDateString } from '@/utils/date'
 
 const ITEM_CATEGORIES = [
   { value: '食材', label: '食材' },
@@ -60,7 +61,7 @@ export default function ShoppingPage() {
     mutationFn: () =>
       createShoppingRequest({
         senior_user_id: seniorUserId,
-        request_date: new Date().toISOString().split('T')[0],
+        request_date: toLocalDateString(),
         notes: notes || undefined,
         items: items.filter((i) => i.item_name.trim()).map((i) => ({
           item_name: i.item_name,

@@ -11,6 +11,7 @@ import LoadingState from '@/components/ui/LoadingState'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { toaster } from '@/components/ui/toaster'
 import ShoppingListGenerator from '@/components/menu/ShoppingListGenerator'
+import { toLocalDateString } from '@/utils/date'
 
 const DAYS = [
   { key: 'monday', label: '月曜日', short: '月' },
@@ -52,7 +53,7 @@ function getWeekStartDate(offset: number): string {
   const day = now.getDay()
   const monday = new Date(now)
   monday.setDate(now.getDate() - ((day + 6) % 7) + offset * 7)
-  return monday.toISOString().split('T')[0]
+  return toLocalDateString(monday)
 }
 
 function formatWeekDisplay(dateStr: string): string {
