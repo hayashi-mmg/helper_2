@@ -10,8 +10,8 @@ vi.mock('@/api/shopping', () => ({
     id: 'sr1', senior_user_id: 'u1', helper_user_id: 'user-2',
     request_date: '2025-07-14', status: 'pending', notes: 'お願いします',
     items: [
-      { id: 'si1', item_name: '牛乳', category: '食材', quantity: '1本', status: 'pending', created_at: '2025-01-01' },
-      { id: 'si2', item_name: '食パン', category: '食材', quantity: '1袋', status: 'pending', created_at: '2025-01-01' },
+      { id: 'si1', item_name: '牛乳', category: '卵・乳製品', quantity: '1本', status: 'pending', created_at: '2025-01-01' },
+      { id: 'si2', item_name: '食パン', category: '穀類', quantity: '1袋', status: 'pending', created_at: '2025-01-01' },
     ],
     created_at: '2025-01-01',
   }]),
@@ -32,7 +32,7 @@ describe('ShoppingPage', () => {
 
   it('新規依頼ボタンが表示されること', () => {
     renderWithProviders(<ShoppingPage />)
-    expect(screen.getByRole('button', { name: '新規依頼' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /新規依頼/ })).toBeInTheDocument()
   })
 
   it('ステータスフィルタボタンが表示されること', () => {
@@ -59,7 +59,7 @@ describe('ShoppingPage', () => {
   it('新規依頼フォームが表示できること', async () => {
     renderWithProviders(<ShoppingPage />)
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: '新規依頼' }))
+    await user.click(screen.getByRole('button', { name: /新規依頼/ }))
     expect(screen.getByText('新しい買い物依頼')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('商品名')).toBeInTheDocument()
   })

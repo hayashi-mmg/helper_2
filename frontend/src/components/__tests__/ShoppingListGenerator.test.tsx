@@ -26,7 +26,7 @@ const mockResult = {
     {
       id: 'item-1',
       item_name: '鶏もも肉',
-      category: '食材',
+      category: '肉類',
       quantity: '（照り焼き 300g + 親子丼 200g）',
       status: 'pending',
       is_excluded: false,

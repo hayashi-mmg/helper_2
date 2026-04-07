@@ -8,6 +8,7 @@ from app.services.shopping_list_generator import (
     AggregatedIngredient,
     _aggregate_ingredients,
     _build_quantity_text,
+    _SKIP_INGREDIENTS,
 )
 
 
@@ -74,6 +75,26 @@ class TestAggregateIngredients:
         """空リスト。"""
         result = _aggregate_ingredients([], {})
         assert result == []
+
+    def test_skip_ingredients_filtered(self):
+        """水などの購入不要食材がスキップされること。"""
+        r1 = uuid.uuid4()
+        name_map = {r1: "テストレシピ"}
+
+        ingredients = [
+            FakeIngredient(id=uuid.uuid4(), recipe_id=r1, name="鶏もも肉", quantity="300g", category="肉類"),
+            FakeIngredient(id=uuid.uuid4(), recipe_id=r1, name="水", quantity="200ml", category="その他"),
+            FakeIngredient(id=uuid.uuid4(), recipe_id=r1, name="お湯", quantity="500ml", category="その他"),
+        ]
+
+        result = _aggregate_ingredients(ingredients, name_map)
+        assert len(result) == 1
+        assert result[0].name == "鶏もも肉"
+
+    def test_all_skip_ingredients_defined(self):
+        """スキップリストに必要な食材が含まれていること。"""
+        expected = {"水", "氷", "お湯", "熱湯", "ぬるま湯", "冷水"}
+        assert _SKIP_INGREDIENTS == expected
 
 
 class TestBuildQuantityText:

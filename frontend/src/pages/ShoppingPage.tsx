@@ -14,12 +14,35 @@ import { toaster } from '@/components/ui/toaster'
 import { toLocalDateString } from '@/utils/date'
 
 const ITEM_CATEGORIES = [
-  { value: '食材', label: '食材' },
+  { value: '野菜', label: '野菜' },
+  { value: '肉類', label: '肉類' },
+  { value: '魚介類', label: '魚介類' },
+  { value: '卵・乳製品', label: '卵・乳製品' },
+  { value: '穀類', label: '穀類' },
   { value: '調味料', label: '調味料' },
   { value: '日用品', label: '日用品' },
   { value: '医薬品', label: '医薬品' },
   { value: 'その他', label: 'その他' },
 ]
+
+const CATEGORY_ORDER = ['野菜', '肉類', '魚介類', '卵・乳製品', '穀類', '調味料', '日用品', '医薬品', 'その他']
+
+function groupItemsByCategory(items: ShoppingItem[]) {
+  const groups = new Map<string, ShoppingItem[]>()
+  for (const item of items) {
+    const cat = item.category || 'その他'
+    if (!groups.has(cat)) groups.set(cat, [])
+    groups.get(cat)!.push(item)
+  }
+  return CATEGORY_ORDER
+    .filter((cat) => groups.has(cat))
+    .map((cat) => ({ category: cat, items: groups.get(cat)! }))
+    .concat(
+      [...groups.entries()]
+        .filter(([cat]) => !CATEGORY_ORDER.includes(cat))
+        .map(([cat, items]) => ({ category: cat, items }))
+    )
+}
 
 const STATUS_LABELS: Record<string, string> = {
   pending: '未購入',
@@ -264,55 +287,64 @@ export default function ShoppingPage() {
               {req.notes && (
                 <Text fontSize="sm" color="text.muted" mb={4}>備考: {req.notes}</Text>
               )}
-              <VStack align="stretch" gap={2}>
-                {req.items.map((item: ShoppingItem) => (
-                  <HStack
-                    key={item.id}
-                    justify="space-between"
-                    bg="bg.muted"
-                    p={3}
-                    borderRadius="lg"
-                  >
-                    <VStack align="start" gap={0}>
-                      <Text fontSize="md" fontWeight="medium" color="text.primary">{item.item_name}</Text>
-                      <HStack gap={2}>
-                        <Text fontSize="sm" color="text.muted">{item.category}</Text>
-                        {item.quantity && <Text fontSize="sm" color="text.muted">数量: {item.quantity}</Text>}
-                      </HStack>
-                    </VStack>
-                    <HStack gap={2}>
-                      <Badge
-                        colorPalette={STATUS_COLORS[item.status] || 'gray'}
-                        variant="subtle"
-                        fontSize="sm"
-                      >
-                        {STATUS_LABELS[item.status] || item.status}
-                      </Badge>
-                      {item.status === 'pending' && (
-                        <>
-                          <Button
-                            size="sm"
-                            bg="success.500"
-                            color="white"
-                            _hover={{ bg: 'success.600' }}
-                            onClick={() => updateItemMutation.mutate({ itemId: item.id, status: 'purchased' })}
-                            cursor="pointer"
-                          >
-                            購入済み
-                          </Button>
-                          <Button
-                            size="sm"
-                            colorPalette="red"
-                            variant="outline"
-                            onClick={() => updateItemMutation.mutate({ itemId: item.id, status: 'unavailable' })}
-                            cursor="pointer"
-                          >
-                            入手不可
-                          </Button>
-                        </>
-                      )}
+              <VStack align="stretch" gap={4}>
+                {groupItemsByCategory(req.items).map(({ category, items: catItems }) => (
+                  <Box key={category}>
+                    <HStack mb={2} gap={2}>
+                      <Text fontSize="sm" fontWeight="bold" color="text.secondary">{category}</Text>
+                      <Badge fontSize="xs" colorPalette="gray" variant="subtle">{catItems.length}</Badge>
                     </HStack>
-                  </HStack>
+                    <VStack align="stretch" gap={2}>
+                      {catItems.map((item: ShoppingItem) => (
+                        <HStack
+                          key={item.id}
+                          justify="space-between"
+                          bg="bg.muted"
+                          p={3}
+                          borderRadius="lg"
+                        >
+                          <VStack align="start" gap={0}>
+                            <Text fontSize="md" fontWeight="medium" color="text.primary">{item.item_name}</Text>
+                            {item.quantity && (
+                              <Text fontSize="sm" color="text.muted">数量: {item.quantity}</Text>
+                            )}
+                          </VStack>
+                          <HStack gap={2}>
+                            <Badge
+                              colorPalette={STATUS_COLORS[item.status] || 'gray'}
+                              variant="subtle"
+                              fontSize="sm"
+                            >
+                              {STATUS_LABELS[item.status] || item.status}
+                            </Badge>
+                            {item.status === 'pending' && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  bg="success.500"
+                                  color="white"
+                                  _hover={{ bg: 'success.600' }}
+                                  onClick={() => updateItemMutation.mutate({ itemId: item.id, status: 'purchased' })}
+                                  cursor="pointer"
+                                >
+                                  購入済み
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  colorPalette="red"
+                                  variant="outline"
+                                  onClick={() => updateItemMutation.mutate({ itemId: item.id, status: 'unavailable' })}
+                                  cursor="pointer"
+                                >
+                                  入手不可
+                                </Button>
+                              </>
+                            )}
+                          </HStack>
+                        </HStack>
+                      ))}
+                    </VStack>
+                  </Box>
                 ))}
               </VStack>
             </Box>

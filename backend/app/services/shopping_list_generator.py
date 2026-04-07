@@ -16,16 +16,8 @@ from app.db.models.recipe_ingredient import RecipeIngredient
 from app.db.models.shopping import ShoppingItem, ShoppingRequest
 
 
-# 食材カテゴリ → 買い物アイテムカテゴリのマッピング
-_CATEGORY_MAP = {
-    "野菜": "食材",
-    "肉類": "食材",
-    "魚介類": "食材",
-    "卵・乳製品": "食材",
-    "調味料": "調味料",
-    "穀類": "食材",
-    "その他": "その他",
-}
+# 買い物リストに含めない食材（購入不要）
+_SKIP_INGREDIENTS = {"水", "氷", "お湯", "熱湯", "ぬるま湯", "冷水"}
 
 
 @dataclass
@@ -69,6 +61,8 @@ def _aggregate_ingredients(
 
     for ing in ingredients:
         key = ing.name.strip()
+        if key in _SKIP_INGREDIENTS:
+            continue
         recipe_name = recipe_name_map.get(ing.recipe_id, "不明")
 
         if key not in grouped:
@@ -137,7 +131,7 @@ async def generate_shopping_list_from_menu(
 
     for agg in aggregated:
         is_excluded = agg.name in pantry_names
-        shopping_category = _CATEGORY_MAP.get(agg.category, "その他")
+        shopping_category = agg.category or "その他"
         quantity_text = _build_quantity_text(agg)
 
         # 最初の ingredient_id をリンク（追跡用）
