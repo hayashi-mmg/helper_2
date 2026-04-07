@@ -4,6 +4,7 @@ import AdminAssignmentsPage from '@/pages/AdminAssignmentsPage'
 import AdminDashboardPage from '@/pages/AdminDashboardPage'
 import AdminUsersPage from '@/pages/AdminUsersPage'
 import DashboardPage from '@/pages/DashboardPage'
+import HelpPage from '@/pages/HelpPage'
 import LoginPage from '@/pages/LoginPage'
 import MenuPage from '@/pages/MenuPage'
 import MessagesPage from '@/pages/MessagesPage'
@@ -58,6 +59,7 @@ export default function App() {
         <Route path="shopping" element={<NonAdminRoute><ShoppingPage /></NonAdminRoute>} />
         <Route path="pantry" element={<NonAdminRoute><PantryPage /></NonAdminRoute>} />
         <Route path="profile" element={<ProfilePage />} />
+        <Route path="help" element={<HelpPage />} />
         <Route path="admin" element={<AdminRoute><AdminDashboardPage /></AdminRoute>} />
         <Route path="admin/users" element={<AdminRoute><AdminUsersPage /></AdminRoute>} />
         <Route path="admin/assignments" element={<AdminRoute><AdminAssignmentsPage /></AdminRoute>} />
