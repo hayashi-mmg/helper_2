@@ -89,7 +89,10 @@ def _build_quantity_text(agg: AggregatedIngredient) -> str | None:
         return None
     if len(agg.quantities) == 1:
         return agg.quantities[0].split(" ", 1)[-1] if " " in agg.quantities[0] else agg.quantities[0]
-    return "（" + " + ".join(agg.quantities) + "）"
+    text = "（" + " + ".join(agg.quantities) + "）"
+    if len(text) > 200:
+        text = text[:197] + "…）"
+    return text
 
 
 async def generate_shopping_list_from_menu(

@@ -36,7 +36,7 @@ class ShoppingItem(Base):
 
     item_name: Mapped[str] = mapped_column(String(100), nullable=False)
     category: Mapped[str] = mapped_column(String(30), nullable=False, default="その他")
-    quantity: Mapped[str | None] = mapped_column(String(50))
+    quantity: Mapped[str | None] = mapped_column(String(200))
     memo: Mapped[str | None] = mapped_column(Text)
 
     # Menu integration
