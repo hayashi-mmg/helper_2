@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import {
   Box,
   Heading,
@@ -7,6 +7,7 @@ import {
   HStack,
   Input,
   Badge,
+  SimpleGrid,
   AccordionRoot,
   AccordionItem,
   AccordionItemTrigger,
@@ -16,7 +17,7 @@ import {
 import PageHeader from '@/components/ui/PageHeader'
 import { useAuthStore } from '@/stores/auth'
 
-// ── SVG icon paths (reusing nav icons where applicable) ─────────────
+// ── SVG icon paths ──────────────────────────────────────────────────
 const ICONS = {
   info: 'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
   login: 'M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1',
@@ -34,50 +35,119 @@ const ICONS = {
   task: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',
   users: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z',
   assign: 'M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4',
+  search: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z',
 }
 
-function SectionIcon({ d, color = '#0369A1' }: { d: string; color?: string }) {
+// ── Color mapping for section icons ─────────────────────────────────
+const SECTION_COLORS: Record<string, { icon: string; bg: string; border: string; accent: string }> = {
+  overview: { icon: '#0EA5E9', bg: '#F0F9FF', border: '#BAE6FD', accent: 'brand.500' },
+  login:    { icon: '#8B5CF6', bg: '#F5F3FF', border: '#DDD6FE', accent: '#8B5CF6' },
+  senior:   { icon: '#059669', bg: '#ECFDF5', border: '#A7F3D0', accent: 'success.500' },
+  helper:   { icon: '#D97706', bg: '#FFFBEB', border: '#FDE68A', accent: 'warn.500' },
+  care_manager: { icon: '#0369A1', bg: '#F0F9FF', border: '#BAE6FD', accent: 'brand.600' },
+  admin:    { icon: '#DC2626', bg: '#FEF2F2', border: '#FECACA', accent: 'danger.500' },
+  faq:      { icon: '#7C3AED', bg: '#FAF5FF', border: '#E9D5FF', accent: '#7C3AED' },
+  contact:  { icon: '#0891B2', bg: '#ECFEFF', border: '#A5F3FC', accent: '#0891B2' },
+}
+
+// ── Reusable icon component (larger for accessibility) ──────────────
+function SectionIcon({ d, color = '#0369A1', size = 28 }: { d: string; color?: string; size?: number }) {
   return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d={d} />
     </svg>
   )
 }
 
-// ── Chevron icon for accordion ──────────────────────────────────────
-function ChevronIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M6 9l6 6 6-6" />
-    </svg>
-  )
-}
-
-// ── Step list component ─────────────────────────────────────────────
+// ── Step list with visual step indicators ───────────────────────────
 function StepList({ steps }: { steps: string[] }) {
   return (
-    <Box as="ol" pl={6} listStyleType="decimal">
+    <VStack align="stretch" gap={0}>
       {steps.map((step, i) => (
-        <Box as="li" key={i} mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-          {step}
-        </Box>
+        <HStack key={i} gap={4} align="flex-start" py={3} borderBottom={i < steps.length - 1 ? '1px solid' : 'none'} borderColor="border.default">
+          <Box
+            w="36px"
+            h="36px"
+            minW="36px"
+            borderRadius="full"
+            bg="brand.500"
+            color="white"
+            display="flex"
+            alignItems="center"
+            justifyContent="center"
+            fontSize="md"
+            fontWeight="bold"
+            mt={0.5}
+          >
+            {i + 1}
+          </Box>
+          <Text fontSize="lg" color="text.primary" lineHeight="1.8" pt={1}>
+            {step}
+          </Text>
+        </HStack>
       ))}
-    </Box>
+    </VStack>
   )
 }
 
-// ── Sub-section component ───────────────────────────────────────────
+// ── Sub-section with card-style background ──────────────────────────
 function SubSection({ title, icon, children }: { title: string; icon?: string; children: React.ReactNode }) {
   return (
-    <Box mb={6}>
-      <HStack gap={2} mb={3}>
-        {icon && <SectionIcon d={icon} color="#0EA5E9" />}
-        <Heading size="md" color="text.primary" fontWeight="semibold">
+    <Box
+      p={5}
+      bg="bg.muted"
+      borderRadius="xl"
+      border="1px solid"
+      borderColor="border.default"
+    >
+      <HStack gap={3} mb={4}>
+        {icon && (
+          <Box
+            w="40px"
+            h="40px"
+            minW="40px"
+            borderRadius="lg"
+            bg="brand.50"
+            display="flex"
+            alignItems="center"
+            justifyContent="center"
+          >
+            <SectionIcon d={icon} color="#0369A1" size={22} />
+          </Box>
+        )}
+        <Heading size="md" color="text.primary" fontWeight="bold">
           {title}
         </Heading>
       </HStack>
-      <Box pl={icon ? 8 : 0}>{children}</Box>
+      <Box pl={icon ? 0 : 0}>{children}</Box>
     </Box>
+  )
+}
+
+// ── Tip / warning callout box ───────────────────────────────────────
+function Callout({ type, children }: { type: 'info' | 'warn' | 'danger'; children: React.ReactNode }) {
+  const styles = {
+    info:   { bg: '#F0F9FF', border: '#0EA5E9', iconColor: '#0EA5E9', icon: 'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
+    warn:   { bg: '#FFFBEB', border: '#F59E0B', iconColor: '#D97706', icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' },
+    danger: { bg: '#FEF2F2', border: '#EF4444', iconColor: '#DC2626', icon: 'M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
+  }
+  const s = styles[type]
+  return (
+    <HStack
+      mt={4}
+      p={5}
+      bg={s.bg}
+      borderRadius="xl"
+      borderLeft="5px solid"
+      borderColor={s.border}
+      gap={4}
+      align="flex-start"
+    >
+      <Box mt={0.5} minW="24px">
+        <SectionIcon d={s.icon} color={s.iconColor} size={24} />
+      </Box>
+      <Box flex="1">{children}</Box>
+    </HStack>
   )
 }
 
@@ -85,8 +155,9 @@ function SubSection({ title, icon, children }: { title: string; icon?: string; c
 interface HelpSection {
   id: string
   title: string
+  description: string
   icon: string
-  roles: string[] // which roles this section is most relevant to
+  roles: string[]
   content: React.ReactNode
   keywords: string[]
 }
@@ -95,12 +166,13 @@ function useHelpSections(): HelpSection[] {
   return useMemo(() => [
     {
       id: 'overview',
-      title: 'はじめに（システム概要）',
+      title: 'はじめに',
+      description: 'システムの概要と対応環境',
       icon: ICONS.info,
       roles: ['senior', 'helper', 'care_manager', 'system_admin'],
       keywords: ['システム', '概要', 'はじめに', '機能', 'ブラウザ', 'デバイス', '対応'],
       content: (
-        <VStack align="stretch" gap={4}>
+        <VStack align="stretch" gap={5}>
           <SubSection title="ホームヘルパー管理システムとは">
             <Text fontSize="lg" color="text.primary" lineHeight="1.8">
               ホームヘルパー管理システムは、在宅介護に関わる<strong>利用者（高齢者）</strong>、
@@ -109,40 +181,56 @@ function useHelpSections(): HelpSection[] {
               介護サービスに必要な情報共有をスムーズに行えます。
             </Text>
           </SubSection>
-          <SubSection title="利用できる機能">
-            <Box as="ul" pl={6} listStyleType="disc">
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                <strong>レシピ管理</strong> — レシピの登録・検索・管理
-              </Box>
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                <strong>献立管理</strong> — 週間献立の作成・管理
-              </Box>
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                <strong>作業管理</strong> — 日々の作業スケジュール確認・完了報告
-              </Box>
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                <strong>メッセージ</strong> — ヘルパーと利用者のやり取り
-              </Box>
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                <strong>買い物管理</strong> — 買い物依頼の作成・状況管理
-              </Box>
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                <strong>パントリー</strong> — 食材在庫の管理
-              </Box>
-            </Box>
+          <SubSection title="利用できる機能" icon={ICONS.menu}>
+            <SimpleGrid columns={{ base: 1, md: 2 }} gap={3}>
+              {[
+                { name: 'レシピ管理', desc: 'レシピの登録・検索・管理', icon: ICONS.recipe, color: '#22C55E' },
+                { name: '献立管理', desc: '週間献立の作成・管理', icon: ICONS.menu, color: '#0EA5E9' },
+                { name: '作業管理', desc: '日々のスケジュール確認・完了報告', icon: ICONS.task, color: '#F59E0B' },
+                { name: 'メッセージ', desc: 'ヘルパーと利用者のやり取り', icon: ICONS.message, color: '#38BDF8' },
+                { name: '買い物管理', desc: '買い物依頼の作成・状況管理', icon: ICONS.shopping, color: '#16A34A' },
+                { name: 'パントリー', desc: '食材在庫の管理', icon: ICONS.pantry, color: '#64748B' },
+              ].map((f) => (
+                <HStack
+                  key={f.name}
+                  p={4}
+                  bg="white"
+                  borderRadius="lg"
+                  border="1px solid"
+                  borderColor="border.default"
+                  gap={3}
+                >
+                  <Box
+                    w="40px" h="40px" minW="40px"
+                    borderRadius="lg" bg={`${f.color}15`}
+                    display="flex" alignItems="center" justifyContent="center"
+                  >
+                    <SectionIcon d={f.icon} color={f.color} size={20} />
+                  </Box>
+                  <Box>
+                    <Text fontWeight="bold" color="text.primary" fontSize="md">{f.name}</Text>
+                    <Text color="text.muted" fontSize="sm">{f.desc}</Text>
+                  </Box>
+                </HStack>
+              ))}
+            </SimpleGrid>
           </SubSection>
           <SubSection title="対応ブラウザ・デバイス">
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={2}>
-              以下のブラウザ・デバイスに対応しています：
-            </Text>
-            <Box as="ul" pl={6} listStyleType="disc">
-              <Box as="li" mb={1} fontSize="lg" color="text.primary">Google Chrome（バージョン90以降）</Box>
-              <Box as="li" mb={1} fontSize="lg" color="text.primary">Safari（バージョン14以降）</Box>
-              <Box as="li" mb={1} fontSize="lg" color="text.primary">Firefox（バージョン88以降）</Box>
-              <Box as="li" mb={1} fontSize="lg" color="text.primary">Microsoft Edge（バージョン90以降）</Box>
-              <Box as="li" mb={1} fontSize="lg" color="text.primary">iPhone / iPad（iOS 14以降）</Box>
-              <Box as="li" mb={1} fontSize="lg" color="text.primary">Android スマートフォン / タブレット（Android 10以降）</Box>
-            </Box>
+            <SimpleGrid columns={{ base: 1, md: 2 }} gap={2}>
+              {[
+                'Google Chrome（バージョン90以降）',
+                'Safari（バージョン14以降）',
+                'Firefox（バージョン88以降）',
+                'Microsoft Edge（バージョン90以降）',
+                'iPhone / iPad（iOS 14以降）',
+                'Android（Android 10以降）',
+              ].map((b) => (
+                <HStack key={b} gap={2} py={2} px={3} bg="white" borderRadius="lg">
+                  <Box w="8px" h="8px" borderRadius="full" bg="success.500" />
+                  <Text fontSize="md" color="text.primary">{b}</Text>
+                </HStack>
+              ))}
+            </SimpleGrid>
           </SubSection>
         </VStack>
       ),
@@ -150,12 +238,13 @@ function useHelpSections(): HelpSection[] {
     {
       id: 'login',
       title: 'ログイン・アカウント',
+      description: 'ログイン方法やプロフィール設定',
       icon: ICONS.login,
       roles: ['senior', 'helper', 'care_manager', 'system_admin'],
       keywords: ['ログイン', 'パスワード', 'QRコード', 'プロフィール', 'ログアウト', 'アカウント'],
       content: (
-        <VStack align="stretch" gap={4}>
-          <SubSection title="パスワードでログインする">
+        <VStack align="stretch" gap={5}>
+          <SubSection title="パスワードでログインする" icon={ICONS.login}>
             <StepList steps={[
               'ログイン画面を開きます。',
               '「メールアドレス」欄にメールアドレスを入力します。',
@@ -165,7 +254,7 @@ function useHelpSections(): HelpSection[] {
             ]} />
           </SubSection>
           <SubSection title="QRコードでログインする（高齢者向け）">
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={3}>
+            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={4}>
               パスワード入力が難しい場合は、QRコードでのログインが便利です。
             </Text>
             <StepList steps={[
@@ -175,7 +264,7 @@ function useHelpSections(): HelpSection[] {
               '自動的にログインが完了します。',
             ]} />
           </SubSection>
-          <SubSection title="プロフィールを確認・編集する">
+          <SubSection title="プロフィールを確認・編集する" icon={ICONS.senior}>
             <StepList steps={[
               '画面上部のヘッダーにある自分の名前をクリックします。',
               'プロフィール画面が開きます。',
@@ -191,17 +280,21 @@ function useHelpSections(): HelpSection[] {
               '新しいパスワードを2回入力します。',
               '「変更」ボタンを押して完了です。',
             ]} />
-            <Box mt={3} p={4} bg="warn.50" borderRadius="lg" borderLeft="4px solid" borderColor="warn.500">
+            <Callout type="warn">
               <Text fontSize="lg" color="text.primary" lineHeight="1.8">
-                パスワードは8文字以上で、英字と数字を含めてください。
+                パスワードは<strong>8文字以上</strong>で、<strong>英字と数字</strong>を含めてください。
               </Text>
-            </Box>
+            </Callout>
           </SubSection>
           <SubSection title="ログアウトする">
             <Text fontSize="lg" color="text.primary" lineHeight="1.8">
               画面右上の「ログアウト」ボタンを押すと、安全にログアウトできます。
-              共有のパソコンを使っている場合は、必ずログアウトしてください。
             </Text>
+            <Callout type="info">
+              <Text fontSize="lg" color="text.primary" lineHeight="1.8">
+                共有のパソコンを使っている場合は、<strong>必ずログアウト</strong>してください。
+              </Text>
+            </Callout>
           </SubSection>
         </VStack>
       ),
@@ -209,76 +302,95 @@ function useHelpSections(): HelpSection[] {
     {
       id: 'senior',
       title: '利用者（高齢者）向けガイド',
+      description: 'レシピ・献立・買い物・メッセージの使い方',
       icon: ICONS.senior,
       roles: ['senior'],
       keywords: ['利用者', '高齢者', 'シニア', 'レシピ', '献立', '買い物', 'パントリー', 'メッセージ'],
       content: (
-        <VStack align="stretch" gap={4}>
+        <VStack align="stretch" gap={5}>
           <SubSection title="レシピ管理" icon={ICONS.recipe}>
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={3}>
+            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={4}>
               お気に入りのレシピを登録・管理できます。ヘルパーさんが調理する際の参考になります。
             </Text>
-            <Heading size="sm" color="text.secondary" mb={2} fontWeight="semibold">レシピを登録する</Heading>
-            <StepList steps={[
-              'ナビゲーションの「レシピ」を押します。',
-              '右上の「レシピ追加」ボタンを押します。',
-              'レシピ名、カテゴリ（和食・洋食・中華など）、種類（主菜・副菜・汁物など）を選びます。',
-              '調理時間と難易度を設定します。',
-              '材料を入力します（名前、分量、単位）。',
-              '作り方を順番に入力します。',
-              'メモや参考URLがあれば入力します。',
-              '「保存」ボタンを押して完了です。',
-            ]} />
-            <Heading size="sm" color="text.secondary" mb={2} mt={4} fontWeight="semibold">レシピを検索・フィルタリングする</Heading>
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8">
-              レシピ一覧画面で、キーワード検索のほか、カテゴリ（和食・洋食など）、
-              種類（主菜・副菜など）、難易度（簡単・普通・難しい）でフィルタリングできます。
-            </Text>
-            <Heading size="sm" color="text.secondary" mb={2} mt={4} fontWeight="semibold">レシピを編集・削除する</Heading>
-            <StepList steps={[
-              'レシピ一覧からレシピをクリックして詳細を開きます。',
-              '「編集」ボタンで内容を変更できます。',
-              '「削除」ボタンでレシピを削除できます（確認画面が表示されます）。',
-            ]} />
+            <Box p={4} bg="white" borderRadius="lg" border="1px solid" borderColor="border.default" mb={4}>
+              <Heading size="sm" color="brand.700" mb={3} fontWeight="bold">レシピを登録する</Heading>
+              <StepList steps={[
+                'ナビゲーションの「レシピ」を押します。',
+                '右上の「レシピ追加」ボタンを押します。',
+                'レシピ名、カテゴリ（和食・洋食・中華など）、種類（主菜・副菜・汁物など）を選びます。',
+                '調理時間と難易度を設定します。',
+                '材料を入力します（名前、分量、単位）。',
+                '作り方を順番に入力します。',
+                'メモや参考URLがあれば入力します。',
+                '「保存」ボタンを押して完了です。',
+              ]} />
+            </Box>
+            <Box p={4} bg="white" borderRadius="lg" border="1px solid" borderColor="border.default" mb={4}>
+              <Heading size="sm" color="brand.700" mb={3} fontWeight="bold">レシピを検索・フィルタリングする</Heading>
+              <Text fontSize="lg" color="text.primary" lineHeight="1.8">
+                レシピ一覧画面で、<strong>キーワード検索</strong>のほか、
+                <strong>カテゴリ</strong>（和食・洋食など）、
+                <strong>種類</strong>（主菜・副菜など）、
+                <strong>難易度</strong>（簡単・普通・難しい）でフィルタリングできます。
+              </Text>
+            </Box>
+            <Box p={4} bg="white" borderRadius="lg" border="1px solid" borderColor="border.default">
+              <Heading size="sm" color="brand.700" mb={3} fontWeight="bold">レシピを編集・削除する</Heading>
+              <StepList steps={[
+                'レシピ一覧からレシピをクリックして詳細を開きます。',
+                '「編集」ボタンで内容を変更できます。',
+                '「削除」ボタンでレシピを削除できます（確認画面が表示されます）。',
+              ]} />
+            </Box>
           </SubSection>
 
           <SubSection title="献立管理" icon={ICONS.menu}>
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={3}>
+            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={4}>
               1週間分の朝食と夕食の献立を計画できます。登録済みのレシピから選んで設定します。
             </Text>
-            <Heading size="sm" color="text.secondary" mb={2} fontWeight="semibold">週間献立を作成する</Heading>
-            <StepList steps={[
-              'ナビゲーションの「献立」を押します。',
-              '各曜日の「朝食」「夕食」欄にレシピを設定します。',
-              'レシピ選択画面から好きなレシピを選びます。',
-              '設定した献立は自動的に保存されます。',
-            ]} />
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mt={3}>
-              献立画面では、登録したレシピの数、平均調理時間、料理カテゴリの分布などの
-              分析情報も確認できます。栄養バランスの参考にしてください。
-            </Text>
+            <Box p={4} bg="white" borderRadius="lg" border="1px solid" borderColor="border.default">
+              <Heading size="sm" color="brand.700" mb={3} fontWeight="bold">週間献立を作成する</Heading>
+              <StepList steps={[
+                'ナビゲーションの「献立」を押します。',
+                '各曜日の「朝食」「夕食」欄にレシピを設定します。',
+                'レシピ選択画面から好きなレシピを選びます。',
+                '設定した献立は自動的に保存されます。',
+              ]} />
+            </Box>
+            <Callout type="info">
+              <Text fontSize="lg" color="text.primary" lineHeight="1.8">
+                献立画面では、レシピの数、平均調理時間、カテゴリ分布などの
+                <strong>分析情報</strong>も確認できます。栄養バランスの参考にしてください。
+              </Text>
+            </Callout>
           </SubSection>
 
           <SubSection title="買い物管理" icon={ICONS.shopping}>
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={3}>
+            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={4}>
               ヘルパーさんに買い物を依頼できます。献立から自動で買い物リストを作ることもできます。
             </Text>
-            <Heading size="sm" color="text.secondary" mb={2} fontWeight="semibold">買い物リストを自動生成する</Heading>
-            <StepList steps={[
-              '献立画面で「買い物リスト生成」ボタンを押します。',
-              '週間献立に必要な材料が自動でリストアップされます。',
-              'パントリー（在庫）にある材料は自動で除外されます。',
-              '必要に応じてリストを編集し、ヘルパーさんに依頼します。',
-            ]} />
-            <Heading size="sm" color="text.secondary" mb={2} mt={4} fontWeight="semibold">買い物の状況を確認する</Heading>
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8">
-              買い物管理画面で、各依頼の状況が確認できます。
-              「依頼中」「購入済み」などのステータスで、進捗がわかります。
-            </Text>
+            <Box p={4} bg="white" borderRadius="lg" border="1px solid" borderColor="border.default" mb={4}>
+              <Heading size="sm" color="brand.700" mb={3} fontWeight="bold">買い物リストを自動生成する</Heading>
+              <StepList steps={[
+                '献立画面で「買い物リスト生成」ボタンを押します。',
+                '週間献立に必要な材料が自動でリストアップされます。',
+                'パントリー（在庫）にある材料は自動で除外されます。',
+                '必要に応じてリストを編集し、ヘルパーさんに依頼します。',
+              ]} />
+            </Box>
+            <Box p={4} bg="white" borderRadius="lg" border="1px solid" borderColor="border.default">
+              <Heading size="sm" color="brand.700" mb={3} fontWeight="bold">買い物の状況を確認する</Heading>
+              <Text fontSize="lg" color="text.primary" lineHeight="1.8">
+                買い物管理画面で、各依頼の状況が確認できます。
+                「<Badge bg="warn.100" color="warn.700" fontSize="sm" px={2}>依頼中</Badge>」
+                「<Badge bg="success.100" color="success.700" fontSize="sm" px={2}>購入済み</Badge>」
+                などのステータスで進捗がわかります。
+              </Text>
+            </Box>
           </SubSection>
 
           <SubSection title="パントリー（食材在庫）" icon={ICONS.pantry}>
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={3}>
+            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={4}>
               ご自宅にある食材の在庫を管理できます。買い物リストの自動生成に活用されます。
             </Text>
             <StepList steps={[
@@ -290,7 +402,7 @@ function useHelpSections(): HelpSection[] {
           </SubSection>
 
           <SubSection title="メッセージ" icon={ICONS.message}>
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={3}>
+            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={4}>
               担当のヘルパーさんとメッセージでやり取りできます。
             </Text>
             <StepList steps={[
@@ -299,11 +411,11 @@ function useHelpSections(): HelpSection[] {
               '「送信」ボタンを押してメッセージを送ります。',
               '相手からの返信は画面に自動的に表示されます。',
             ]} />
-            <Box mt={3} p={4} bg="brand.50" borderRadius="lg" borderLeft="4px solid" borderColor="brand.500">
+            <Callout type="info">
               <Text fontSize="lg" color="text.primary" lineHeight="1.8">
                 未読のメッセージがある場合、メッセージ画面に通知が表示されます。
               </Text>
-            </Box>
+            </Callout>
           </SubSection>
         </VStack>
       ),
@@ -311,11 +423,12 @@ function useHelpSections(): HelpSection[] {
     {
       id: 'helper',
       title: 'ヘルパー向けガイド',
+      description: '作業管理・調理・報告の使い方',
       icon: ICONS.helper,
       roles: ['helper'],
       keywords: ['ヘルパー', '作業', 'ダッシュボード', '調理', '定期', '特別依頼', '買い物', '作業報告', '日報'],
       content: (
-        <VStack align="stretch" gap={4}>
+        <VStack align="stretch" gap={5}>
           <SubSection title="ダッシュボード（ホーム画面）">
             <Text fontSize="lg" color="text.primary" lineHeight="1.8">
               ログイン後のダッシュボードでは、本日の担当利用者、スケジュール、
@@ -324,7 +437,7 @@ function useHelpSections(): HelpSection[] {
           </SubSection>
 
           <SubSection title="作業管理" icon={ICONS.task}>
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={3}>
+            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={4}>
               本日の作業一覧を確認し、完了状況を管理します。
             </Text>
             <StepList steps={[
@@ -337,7 +450,7 @@ function useHelpSections(): HelpSection[] {
           </SubSection>
 
           <SubSection title="調理作業" icon={ICONS.recipe}>
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={3}>
+            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={4}>
               利用者が登録したレシピに従って調理します。
             </Text>
             <StepList steps={[
@@ -350,9 +463,6 @@ function useHelpSections(): HelpSection[] {
           </SubSection>
 
           <SubSection title="定期作業（洗濯・掃除など）">
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={3}>
-              定期的に行う家事作業のスケジュールと内容を管理します。
-            </Text>
             <Text fontSize="lg" color="text.primary" lineHeight="1.8">
               作業管理画面に、予定されている定期作業が表示されます。
               洗濯、掃除、整理整頓など、各作業の内容と推定時間を確認して進めてください。
@@ -361,23 +471,41 @@ function useHelpSections(): HelpSection[] {
           </SubSection>
 
           <SubSection title="特別依頼の対応">
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={3}>
-              利用者からの特別な依頼は、優先度（高・中・低）で分類されています。
+            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={4}>
+              利用者からの特別な依頼は、優先度で分類されています：
             </Text>
-            <Box as="ul" pl={6} listStyleType="disc">
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                <Badge bg="danger.100" color="danger.700" mr={2}>高</Badge>
-                至急対応が必要な依頼です。最優先で対応してください。
-              </Box>
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                <Badge bg="warn.100" color="warn.700" mr={2}>中</Badge>
-                当日中に対応が必要な依頼です。
-              </Box>
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                <Badge bg="success.100" color="success.700" mr={2}>低</Badge>
-                時間に余裕がある依頼です。他の作業の合間に対応してください。
-              </Box>
-            </Box>
+            <VStack align="stretch" gap={3}>
+              {[
+                { label: '高', bg: '#FEF2F2', border: '#FECACA', color: '#DC2626', desc: '至急対応が必要な依頼です。最優先で対応してください。' },
+                { label: '中', bg: '#FFFBEB', border: '#FDE68A', color: '#D97706', desc: '当日中に対応が必要な依頼です。' },
+                { label: '低', bg: '#ECFDF5', border: '#A7F3D0', color: '#059669', desc: '時間に余裕がある依頼です。他の作業の合間に対応してください。' },
+              ].map((p) => (
+                <HStack
+                  key={p.label}
+                  p={4}
+                  bg={p.bg}
+                  borderRadius="lg"
+                  border="1px solid"
+                  borderColor={p.border}
+                  gap={4}
+                >
+                  <Badge
+                    bg={p.color}
+                    color="white"
+                    fontSize="md"
+                    px={3}
+                    py={1}
+                    borderRadius="md"
+                    fontWeight="bold"
+                    minW="40px"
+                    textAlign="center"
+                  >
+                    {p.label}
+                  </Badge>
+                  <Text fontSize="lg" color="text.primary" lineHeight="1.6">{p.desc}</Text>
+                </HStack>
+              ))}
+            </VStack>
           </SubSection>
 
           <SubSection title="買い物対応" icon={ICONS.shopping}>
@@ -397,7 +525,7 @@ function useHelpSections(): HelpSection[] {
           </SubSection>
 
           <SubSection title="作業報告（日報）">
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={3}>
+            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={4}>
               1日の作業が終わったら、作業報告を作成します。
             </Text>
             <StepList steps={[
@@ -407,12 +535,12 @@ function useHelpSections(): HelpSection[] {
               '次回のヘルパーへの申し送り事項があれば記入します。',
               '「報告を送信」ボタンを押して完了です。',
             ]} />
-            <Box mt={3} p={4} bg="warn.50" borderRadius="lg" borderLeft="4px solid" borderColor="warn.500">
+            <Callout type="warn">
               <Text fontSize="lg" color="text.primary" lineHeight="1.8">
                 申し送り事項は、次回担当するヘルパーに共有されます。
-                利用者の体調変化や特記事項があれば、必ず記録してください。
+                利用者の<strong>体調変化</strong>や<strong>特記事項</strong>があれば、必ず記録してください。
               </Text>
-            </Box>
+            </Callout>
           </SubSection>
         </VStack>
       ),
@@ -420,13 +548,14 @@ function useHelpSections(): HelpSection[] {
     {
       id: 'care_manager',
       title: 'ケアマネージャー向けガイド',
+      description: '担当者管理・モニタリング・データ出力',
       icon: ICONS.careManager,
       roles: ['care_manager'],
       keywords: ['ケアマネ', 'ケアマネージャー', '担当', 'モニタリング', 'CSV', 'エクスポート', '進捗'],
       content: (
-        <VStack align="stretch" gap={4}>
-          <SubSection title="担当利用者・ヘルパーの確認">
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={3}>
+        <VStack align="stretch" gap={5}>
+          <SubSection title="担当利用者・ヘルパーの確認" icon={ICONS.users}>
+            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={4}>
               ご自身が担当する利用者とヘルパーの一覧を確認できます。
             </Text>
             <StepList steps={[
@@ -436,10 +565,7 @@ function useHelpSections(): HelpSection[] {
             ]} />
           </SubSection>
 
-          <SubSection title="作業完了状況のモニタリング">
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={3}>
-              担当する利用者に対する介護サービスの実施状況を確認できます。
-            </Text>
+          <SubSection title="作業完了状況のモニタリング" icon={ICONS.task}>
             <Text fontSize="lg" color="text.primary" lineHeight="1.8">
               作業管理画面では、各利用者へのサービス提供状況、作業完了率、
               ヘルパーの訪問記録などを確認できます。
@@ -448,7 +574,7 @@ function useHelpSections(): HelpSection[] {
           </SubSection>
 
           <SubSection title="CSVデータエクスポート">
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={3}>
+            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={4}>
               担当利用者のデータをCSV形式でエクスポートできます。報告書作成に活用してください。
             </Text>
             <StepList steps={[
@@ -457,11 +583,11 @@ function useHelpSections(): HelpSection[] {
               '期間やフィルタを指定します。',
               'ダウンロードが自動的に開始されます。',
             ]} />
-            <Box mt={3} p={4} bg="brand.50" borderRadius="lg" borderLeft="4px solid" borderColor="brand.500">
+            <Callout type="info">
               <Text fontSize="lg" color="text.primary" lineHeight="1.8">
                 エクスポートできるのは、ご自身が担当する利用者のデータのみです。
               </Text>
-            </Box>
+            </Callout>
           </SubSection>
         </VStack>
       ),
@@ -469,67 +595,73 @@ function useHelpSections(): HelpSection[] {
     {
       id: 'admin',
       title: '管理者向けガイド',
+      description: 'ユーザー管理・アサイン・統計情報',
       icon: ICONS.admin,
       roles: ['system_admin'],
       keywords: ['管理者', 'アドミン', 'ユーザー管理', 'アサイン', 'アカウント', '統計'],
       content: (
-        <VStack align="stretch" gap={4}>
+        <VStack align="stretch" gap={5}>
           <SubSection title="ユーザー管理" icon={ICONS.users}>
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={3}>
+            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={4}>
               システムに登録されているユーザーのアカウントを管理します。
             </Text>
-            <Heading size="sm" color="text.secondary" mb={2} fontWeight="semibold">新規ユーザーを作成する</Heading>
-            <StepList steps={[
-              'ナビゲーションの「ユーザー管理」を押します。',
-              '「ユーザー追加」ボタンを押します。',
-              '氏名、メールアドレス、パスワードを入力します。',
-              'ロール（利用者・ヘルパー・ケアマネージャー）を選択します。',
-              '「作成」ボタンを押して完了です。',
-            ]} />
-            <Heading size="sm" color="text.secondary" mb={2} mt={4} fontWeight="semibold">ユーザーを編集・無効化する</Heading>
-            <StepList steps={[
-              'ユーザー一覧から対象のユーザーを選びます。',
-              '「編集」ボタンで名前、メールアドレス、ロールを変更できます。',
-              'パスワードリセットが必要な場合は「パスワードリセット」ボタンを使います。',
-              'アカウントを無効にする場合は「無効化」ボタンを押します。',
-            ]} />
+            <Box p={4} bg="white" borderRadius="lg" border="1px solid" borderColor="border.default" mb={4}>
+              <Heading size="sm" color="brand.700" mb={3} fontWeight="bold">新規ユーザーを作成する</Heading>
+              <StepList steps={[
+                'ナビゲーションの「ユーザー管理」を押します。',
+                '「ユーザー追加」ボタンを押します。',
+                '氏名、メールアドレス、パスワードを入力します。',
+                'ロール（利用者・ヘルパー・ケアマネージャー）を選択します。',
+                '「作成」ボタンを押して完了です。',
+              ]} />
+            </Box>
+            <Box p={4} bg="white" borderRadius="lg" border="1px solid" borderColor="border.default">
+              <Heading size="sm" color="brand.700" mb={3} fontWeight="bold">ユーザーを編集・無効化する</Heading>
+              <StepList steps={[
+                'ユーザー一覧から対象のユーザーを選びます。',
+                '「編集」ボタンで名前、メールアドレス、ロールを変更できます。',
+                'パスワードリセットが必要な場合は「パスワードリセット」ボタンを使います。',
+                'アカウントを無効にする場合は「無効化」ボタンを押します。',
+              ]} />
+            </Box>
           </SubSection>
 
           <SubSection title="アサイン管理" icon={ICONS.assign}>
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={3}>
+            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={4}>
               ヘルパーと利用者の紐付け（アサインメント）を管理します。
             </Text>
-            <Heading size="sm" color="text.secondary" mb={2} fontWeight="semibold">新規アサインを作成する</Heading>
-            <StepList steps={[
-              'ナビゲーションの「アサイン管理」を押します。',
-              '「新規アサイン」ボタンを押します。',
-              '利用者とヘルパーを選択します。',
-              '訪問スケジュール（曜日・時間帯）を設定します。',
-              '「作成」ボタンを押して完了です。',
-            ]} />
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mt={3}>
+            <Box p={4} bg="white" borderRadius="lg" border="1px solid" borderColor="border.default">
+              <Heading size="sm" color="brand.700" mb={3} fontWeight="bold">新規アサインを作成する</Heading>
+              <StepList steps={[
+                'ナビゲーションの「アサイン管理」を押します。',
+                '「新規アサイン」ボタンを押します。',
+                '利用者とヘルパーを選択します。',
+                '訪問スケジュール（曜日・時間帯）を設定します。',
+                '「作成」ボタンを押して完了です。',
+              ]} />
+            </Box>
+            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mt={4}>
               アサインの変更や終了も、アサイン管理画面から操作できます。
             </Text>
           </SubSection>
 
-          <SubSection title="ダッシュボード（統計情報）">
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8">
+          <SubSection title="ダッシュボード（統計情報）" icon={ICONS.careManager}>
+            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={3}>
               管理ダッシュボードでは、以下の統計情報を確認できます：
             </Text>
-            <Box as="ul" pl={6} listStyleType="disc" mt={2}>
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                ロール別ユーザー数（利用者・ヘルパー・ケアマネージャー）
-              </Box>
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                アクティブなアサイン数
-              </Box>
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                作業完了率
-              </Box>
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                最近の操作ログ
-              </Box>
-            </Box>
+            <SimpleGrid columns={{ base: 1, md: 2 }} gap={3}>
+              {[
+                'ロール別ユーザー数',
+                'アクティブなアサイン数',
+                '作業完了率',
+                '最近の操作ログ',
+              ].map((item) => (
+                <HStack key={item} p={3} bg="white" borderRadius="lg" border="1px solid" borderColor="border.default" gap={3}>
+                  <Box w="8px" h="8px" borderRadius="full" bg="brand.500" />
+                  <Text fontSize="md" color="text.primary" fontWeight="medium">{item}</Text>
+                </HStack>
+              ))}
+            </SimpleGrid>
           </SubSection>
         </VStack>
       ),
@@ -537,169 +669,238 @@ function useHelpSections(): HelpSection[] {
     {
       id: 'faq',
       title: 'よくある質問（FAQ）',
+      description: 'トラブルシューティングと解決方法',
       icon: ICONS.faq,
       roles: ['senior', 'helper', 'care_manager', 'system_admin'],
       keywords: ['FAQ', '質問', 'トラブル', 'パスワード', '忘れた', '表示されない', 'エラー', '文字', '小さい'],
       content: (
         <VStack align="stretch" gap={4}>
-          <SubSection title="パスワードを忘れてしまいました">
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8">
-              システム管理者にご連絡ください。管理者がパスワードをリセットし、
-              新しいパスワードをお伝えします。QRコードでのログインもご利用いただけます。
-            </Text>
-          </SubSection>
-
-          <SubSection title="画面が正しく表示されません">
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={2}>
-              以下の手順をお試しください：
-            </Text>
-            <StepList steps={[
-              'ブラウザの「更新」ボタン（丸い矢印のマーク）を押します。',
-              'それでも直らない場合は、ブラウザを閉じてもう一度開きます。',
-              'それでも直らない場合は、別のブラウザ（Chrome、Safariなど）で試します。',
-              '問題が続く場合は、システム管理者にご連絡ください。',
-            ]} />
-          </SubSection>
-
-          <SubSection title="メッセージが届きません">
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8">
-              メッセージ画面を開いた状態で、ページを更新してみてください。
-              インターネット接続が安定していることを確認してください。
-              それでも届かない場合は、相手が送信を完了しているか確認してください。
-            </Text>
-          </SubSection>
-
-          <SubSection title="レシピが保存できません">
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={2}>
-              以下を確認してください：
-            </Text>
-            <Box as="ul" pl={6} listStyleType="disc">
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                レシピ名が入力されていますか？（必須項目です）
-              </Box>
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                カテゴリと種類が選択されていますか？
-              </Box>
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                インターネットに接続されていますか？
+          {[
+            {
+              q: 'パスワードを忘れてしまいました',
+              a: 'システム管理者にご連絡ください。管理者がパスワードをリセットし、新しいパスワードをお伝えします。QRコードでのログインもご利用いただけます。',
+            },
+            {
+              q: '画面が正しく表示されません',
+              a: null,
+              steps: [
+                'ブラウザの「更新」ボタン（丸い矢印のマーク）を押します。',
+                'それでも直らない場合は、ブラウザを閉じてもう一度開きます。',
+                'それでも直らない場合は、別のブラウザ（Chrome、Safariなど）で試します。',
+                '問題が続く場合は、システム管理者にご連絡ください。',
+              ],
+            },
+            {
+              q: 'メッセージが届きません',
+              a: 'メッセージ画面を開いた状態で、ページを更新してみてください。インターネット接続が安定していることを確認してください。それでも届かない場合は、相手が送信を完了しているか確認してください。',
+            },
+            {
+              q: 'レシピが保存できません',
+              a: null,
+              checks: [
+                'レシピ名が入力されていますか？（必須項目です）',
+                'カテゴリと種類が選択されていますか？',
+                'インターネットに接続されていますか？',
+              ],
+              extra: '赤い文字でエラーが表示されている場合は、その指示に従ってください。',
+            },
+            {
+              q: '買い物リストが生成されません',
+              a: '買い物リストは献立に登録されたレシピから自動生成されます。まず献立画面でレシピが正しく設定されているか確認してください。レシピに材料が登録されていない場合、リストに反映されません。',
+            },
+            {
+              q: 'ログインできません',
+              a: null,
+              checks: [
+                'メールアドレスに間違いがないか確認してください。',
+                'パスワードの大文字・小文字が正しいか確認してください。',
+                'キーボードの「Caps Lock」がオフになっているか確認してください。',
+                'それでもログインできない場合は、管理者にパスワードリセットを依頼してください。',
+              ],
+            },
+            {
+              q: '画面の文字が小さくて読みにくいです',
+              a: null,
+              custom: (
+                <VStack align="stretch" gap={3}>
+                  <Text fontSize="lg" color="text.primary" lineHeight="1.8">
+                    ブラウザの拡大機能で文字を大きくできます：
+                  </Text>
+                  {[
+                    { label: 'パソコン', desc: '「Ctrl」+「+」で拡大、「Ctrl」+「-」で縮小、「Ctrl」+「0」で元に戻る' },
+                    { label: 'Mac', desc: '「Command」+「+」で拡大' },
+                    { label: 'スマホ / タブレット', desc: '2本の指で画面を広げる（ピンチアウト）で拡大' },
+                  ].map((d) => (
+                    <HStack key={d.label} p={3} bg="white" borderRadius="lg" border="1px solid" borderColor="border.default" gap={3} align="flex-start">
+                      <Badge bg="brand.100" color="brand.700" fontSize="sm" px={2} py={1} borderRadius="md" minW="80px" textAlign="center">{d.label}</Badge>
+                      <Text fontSize="md" color="text.primary" lineHeight="1.6">{d.desc}</Text>
+                    </HStack>
+                  ))}
+                </VStack>
+              ),
+            },
+            {
+              q: '「インターネットに接続できません」と表示されます',
+              a: null,
+              steps: [
+                'Wi-Fiの電波状況を確認してください。',
+                'Wi-Fiを一度オフにして、再度オンにしてみてください。',
+                '他のウェブサイト（例：Yahoo! JAPAN）が表示できるか確認してください。',
+                'ルーターの電源を抜いて10秒待ち、再度差し込んでみてください。',
+                '問題が続く場合は、ご家族やサポート担当者にご相談ください。',
+              ],
+            },
+          ].map((faq) => (
+            <Box
+              key={faq.q}
+              p={5}
+              bg="bg.muted"
+              borderRadius="xl"
+              border="1px solid"
+              borderColor="border.default"
+            >
+              <HStack gap={3} mb={3}>
+                <Box
+                  w="32px" h="32px" minW="32px"
+                  borderRadius="full" bg="#7C3AED" color="white"
+                  display="flex" alignItems="center" justifyContent="center"
+                  fontSize="md" fontWeight="bold"
+                >
+                  Q
+                </Box>
+                <Heading size="md" color="text.primary" fontWeight="bold">
+                  {faq.q}
+                </Heading>
+              </HStack>
+              <Box pl={11}>
+                {faq.a && (
+                  <Text fontSize="lg" color="text.primary" lineHeight="1.8">{faq.a}</Text>
+                )}
+                {faq.steps && <StepList steps={faq.steps} />}
+                {faq.checks && (
+                  <VStack align="stretch" gap={2}>
+                    {faq.checks.map((c) => (
+                      <HStack key={c} gap={3} align="flex-start">
+                        <Box mt={2} w="8px" h="8px" minW="8px" borderRadius="full" bg="brand.500" />
+                        <Text fontSize="lg" color="text.primary" lineHeight="1.8">{c}</Text>
+                      </HStack>
+                    ))}
+                  </VStack>
+                )}
+                {faq.extra && (
+                  <Text fontSize="lg" color="text.primary" lineHeight="1.8" mt={3}>{faq.extra}</Text>
+                )}
+                {faq.custom}
               </Box>
             </Box>
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mt={2}>
-              赤い文字でエラーが表示されている場合は、その指示に従ってください。
-            </Text>
-          </SubSection>
-
-          <SubSection title="買い物リストが生成されません">
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8">
-              買い物リストは献立に登録されたレシピから自動生成されます。
-              まず献立画面でレシピが正しく設定されているか確認してください。
-              レシピに材料が登録されていない場合、リストに反映されません。
-            </Text>
-          </SubSection>
-
-          <SubSection title="ログインできません">
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={2}>
-              以下を確認してください：
-            </Text>
-            <Box as="ul" pl={6} listStyleType="disc">
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                メールアドレスに間違いがないか確認してください。
-              </Box>
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                パスワードの大文字・小文字が正しいか確認してください。
-              </Box>
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                キーボードの「Caps Lock」がオフになっているか確認してください。
-              </Box>
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                それでもログインできない場合は、管理者にパスワードリセットを依頼してください。
-              </Box>
-            </Box>
-          </SubSection>
-
-          <SubSection title="画面の文字が小さくて読みにくいです">
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={3}>
-              ブラウザの拡大機能で文字を大きくできます：
-            </Text>
-            <Box as="ul" pl={6} listStyleType="disc">
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                <strong>パソコン</strong>：「Ctrl」キーを押しながら「+」キーを押すと拡大します。
-                「Ctrl」+「-」で縮小、「Ctrl」+「0」で元に戻ります。
-              </Box>
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                <strong>Mac</strong>：「Command」キーを押しながら「+」キーで拡大します。
-              </Box>
-              <Box as="li" mb={2} fontSize="lg" color="text.primary" lineHeight="1.8">
-                <strong>スマートフォン / タブレット</strong>：2本の指で画面を広げる（ピンチアウト）と拡大します。
-              </Box>
-            </Box>
-          </SubSection>
-
-          <SubSection title="「インターネットに接続できません」と表示されます">
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={2}>
-              以下をお試しください：
-            </Text>
-            <StepList steps={[
-              'Wi-Fiの電波状況を確認してください。',
-              'Wi-Fiを一度オフにして、再度オンにしてみてください。',
-              '他のウェブサイト（例：Yahoo! JAPAN）が表示できるか確認してください。',
-              'ルーターの電源を抜いて10秒待ち、再度差し込んでみてください。',
-              '問題が続く場合は、ご家族やサポート担当者にご相談ください。',
-            ]} />
-          </SubSection>
+          ))}
         </VStack>
       ),
     },
     {
       id: 'contact',
       title: 'お問い合わせ・サポート',
+      description: '連絡先と緊急時の対応',
       icon: ICONS.contact,
       roles: ['senior', 'helper', 'care_manager', 'system_admin'],
       keywords: ['お問い合わせ', 'サポート', '連絡', '電話', 'メール', 'ヘルプ'],
       content: (
-        <VStack align="stretch" gap={4}>
-          <SubSection title="システムに関するお問い合わせ">
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8" mb={3}>
-              システムの操作方法やトラブルについてお困りの場合は、以下の方法でサポートを受けられます。
+        <VStack align="stretch" gap={5}>
+          <SubSection title="サポートへの連絡方法" icon={ICONS.contact}>
+            <VStack align="stretch" gap={3}>
+              {[
+                { label: 'システム管理者に連絡', desc: 'ログイン問題やアカウントに関する問題は、所属事業所のシステム管理者にご連絡ください。', color: '#0369A1', bg: '#F0F9FF' },
+                { label: '担当ケアマネージャーに相談', desc: 'サービス内容に関するご質問は、担当のケアマネージャーにお問い合わせください。', color: '#059669', bg: '#ECFDF5' },
+                { label: '担当ヘルパーに相談', desc: '日常的な操作でお困りの場合は、訪問時にヘルパーさんにお声がけください。', color: '#D97706', bg: '#FFFBEB' },
+              ].map((c) => (
+                <Box key={c.label} p={5} bg={c.bg} borderRadius="xl" border="1px solid" borderColor="border.default">
+                  <Text fontWeight="bold" color={c.color} fontSize="lg" mb={1}>{c.label}</Text>
+                  <Text fontSize="lg" color="text.primary" lineHeight="1.8">{c.desc}</Text>
+                </Box>
+              ))}
+            </VStack>
+          </SubSection>
+          <Callout type="danger">
+            <Text fontSize="xl" color="text.primary" lineHeight="1.8" fontWeight="bold">
+              体調の急変や緊急事態の場合は、このシステムではなく、
+              直接電話（119番）でご連絡ください。
             </Text>
-            <Box as="ul" pl={6} listStyleType="disc">
-              <Box as="li" mb={3} fontSize="lg" color="text.primary" lineHeight="1.8">
-                <strong>システム管理者に連絡</strong><br />
-                ログイン問題やアカウントに関する問題は、所属事業所のシステム管理者にご連絡ください。
-              </Box>
-              <Box as="li" mb={3} fontSize="lg" color="text.primary" lineHeight="1.8">
-                <strong>担当ケアマネージャーに相談</strong><br />
-                サービス内容に関するご質問は、担当のケアマネージャーにお問い合わせください。
-              </Box>
-              <Box as="li" mb={3} fontSize="lg" color="text.primary" lineHeight="1.8">
-                <strong>担当ヘルパーに相談</strong><br />
-                日常的な操作でお困りの場合は、訪問時にヘルパーさんにお声がけください。
-              </Box>
-            </Box>
-          </SubSection>
-          <SubSection title="緊急時の対応">
-            <Box p={4} bg="danger.50" borderRadius="lg" borderLeft="4px solid" borderColor="danger.500">
-              <Text fontSize="lg" color="text.primary" lineHeight="1.8" fontWeight="semibold">
-                体調の急変や緊急事態の場合は、このシステムではなく、
-                直接電話（119番）でご連絡ください。
-              </Text>
-            </Box>
-          </SubSection>
+          </Callout>
         </VStack>
       ),
     },
   ], [])
 }
 
+// ── Quick nav card for table of contents ─────────────────────────────
+function QuickNavCard({
+  section,
+  isRelevant,
+  onClick,
+}: {
+  section: HelpSection
+  isRelevant: boolean
+  onClick: () => void
+}) {
+  const colors = SECTION_COLORS[section.id] || SECTION_COLORS.overview
+  return (
+    <Box
+      p={4}
+      bg={isRelevant ? colors.bg : 'bg.card'}
+      borderRadius="xl"
+      border="2px solid"
+      borderColor={isRelevant ? colors.border : 'border.default'}
+      cursor="pointer"
+      onClick={onClick}
+      _hover={{
+        borderColor: colors.icon,
+        shadow: 'md',
+        transform: 'translateY(-2px)',
+      }}
+      transition="all 0.2s"
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick() }}
+    >
+      <HStack gap={3}>
+        <Box
+          w="44px" h="44px" minW="44px"
+          borderRadius="xl"
+          bg={`${colors.icon}20`}
+          display="flex" alignItems="center" justifyContent="center"
+        >
+          <SectionIcon d={section.icon} color={colors.icon} size={24} />
+        </Box>
+        <Box flex="1">
+          <HStack gap={2} mb={0.5}>
+            <Text fontWeight="bold" color="text.primary" fontSize="md">
+              {section.title}
+            </Text>
+            {isRelevant && (
+              <Badge bg={`${colors.icon}20`} color={colors.icon} fontSize="xs" px={1.5} py={0.5} borderRadius="md">
+                おすすめ
+              </Badge>
+            )}
+          </HStack>
+          <Text color="text.muted" fontSize="sm" lineHeight="1.4">
+            {section.description}
+          </Text>
+        </Box>
+      </HStack>
+    </Box>
+  )
+}
+
 // ── Main Help Page Component ────────────────────────────────────────
 export default function HelpPage() {
   const user = useAuthStore((state) => state.user)
   const [searchQuery, setSearchQuery] = useState('')
+  const [openSections, setOpenSections] = useState<string[]>([])
   const sections = useHelpSections()
 
   // Determine default open sections based on user role
   const defaultOpenSections = useMemo(() => {
-    const defaults = ['overview', 'login', 'faq', 'contact']
+    const defaults = ['overview']
     if (user?.role) {
       const roleMap: Record<string, string> = {
         senior: 'senior',
@@ -720,9 +921,19 @@ export default function HelpPage() {
     return sections.filter(
       (s) =>
         s.title.toLowerCase().includes(query) ||
+        s.description.toLowerCase().includes(query) ||
         s.keywords.some((k) => k.toLowerCase().includes(query))
     )
   }, [sections, searchQuery])
+
+  // Scroll to section and open it
+  const scrollToSection = useCallback((sectionId: string) => {
+    setOpenSections((prev) => prev.includes(sectionId) ? prev : [...prev, sectionId])
+    setTimeout(() => {
+      const el = document.getElementById(`help-section-${sectionId}`)
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 100)
+  }, [])
 
   const ROLE_LABELS: Record<string, string> = {
     senior: '利用者',
@@ -731,69 +942,107 @@ export default function HelpPage() {
     system_admin: '管理者',
   }
 
+  const isRelevantSection = (section: HelpSection) => {
+    if (!user?.role) return true
+    return section.roles.includes(user.role)
+  }
+
+  // Compute effective accordion value
+  const accordionValue = useMemo(() => {
+    if (searchQuery) return filteredSections.map((s) => s.id)
+    return openSections.length > 0 ? openSections : defaultOpenSections
+  }, [searchQuery, filteredSections, openSections, defaultOpenSections])
+
   return (
     <Box>
       <PageHeader title="ヘルプ" />
 
-      {/* Role badge + search */}
+      {/* Hero section with search */}
       <Box
-        bg="bg.card"
+        bg="brand.600"
         borderRadius="2xl"
-        border="1px solid"
-        borderColor="border.default"
-        p={6}
-        mb={6}
+        p={8}
+        mb={8}
+        color="white"
       >
-        <VStack align="stretch" gap={4}>
-          <HStack justify="space-between" align="center" flexWrap="wrap" gap={3}>
-            <Text fontSize="lg" color="text.primary" lineHeight="1.8">
-              このページでは、システムの使い方を説明しています。
-              お探しの内容がある場合は、下の検索ボックスをご利用ください。
+        <VStack align="stretch" gap={5}>
+          <VStack align="center" gap={2}>
+            <Heading size="xl" fontWeight="bold" textAlign="center">
+              お困りですか？
+            </Heading>
+            <Text fontSize="lg" textAlign="center" opacity={0.9}>
+              キーワードを入力して、必要な情報を見つけてください
             </Text>
-            {user?.role && (
-              <Badge
-                bg="brand.50"
-                color="brand.700"
-                fontSize="md"
-                px={4}
-                py={2}
-                borderRadius="lg"
-                fontWeight="semibold"
-                flexShrink={0}
-              >
-                {ROLE_LABELS[user.role] || user.role}
-              </Badge>
-            )}
-          </HStack>
-          <Input
-            placeholder="キーワードで検索（例：レシピ、ログイン、パスワード）"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            size="lg"
-            bg="white"
-            borderColor="border.default"
-            _hover={{ borderColor: 'border.hover' }}
-            _focus={{ borderColor: 'brand.500', boxShadow: '0 0 0 1px var(--chakra-colors-brand-500)' }}
-            fontSize="lg"
-          />
+          </VStack>
+          <Box maxW="600px" mx="auto" w="100%">
+            <HStack
+              bg="white"
+              borderRadius="xl"
+              px={4}
+              py={1}
+              shadow="lg"
+            >
+              <SectionIcon d={ICONS.search} color="#94A3B8" size={22} />
+              <Input
+                placeholder="例：レシピ、ログイン、パスワード"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                size="lg"
+                border="none"
+                _focus={{ boxShadow: 'none' }}
+                color="text.primary"
+                fontSize="lg"
+              />
+            </HStack>
+          </Box>
+          {user?.role && (
+            <Text fontSize="md" textAlign="center" opacity={0.8}>
+              {ROLE_LABELS[user.role]}としてログイン中 — あなたに関連するセクションを優先表示しています
+            </Text>
+          )}
         </VStack>
       </Box>
+
+      {/* Quick navigation cards */}
+      {!searchQuery && (
+        <Box mb={8}>
+          <Heading size="lg" color="text.primary" fontWeight="bold" mb={4}>
+            目次
+          </Heading>
+          <SimpleGrid columns={{ base: 1, sm: 2, lg: 4 }} gap={3}>
+            {sections.map((section) => (
+              <QuickNavCard
+                key={section.id}
+                section={section}
+                isRelevant={
+                  !['overview', 'login', 'faq', 'contact'].includes(section.id) &&
+                  isRelevantSection(section)
+                }
+                onClick={() => scrollToSection(section.id)}
+              />
+            ))}
+          </SimpleGrid>
+        </Box>
+      )}
 
       {/* No results */}
       {filteredSections.length === 0 && (
         <Box
           bg="bg.card"
-          borderRadius="xl"
+          borderRadius="2xl"
           border="1px solid"
           borderColor="border.default"
-          p={8}
+          p={10}
           textAlign="center"
         >
-          <Text fontSize="xl" color="text.muted" mb={2}>
-            「{searchQuery}」に一致するヘルプが見つかりませんでした。
-          </Text>
+          <Box mb={4}>
+            <SectionIcon d={ICONS.search} color="#94A3B8" size={48} />
+          </Box>
+          <Heading size="lg" color="text.primary" mb={2}>
+            「{searchQuery}」に一致する項目がありません
+          </Heading>
           <Text fontSize="lg" color="text.muted">
-            別のキーワードで検索するか、お問い合わせセクションをご確認ください。
+            別のキーワードで検索するか、検索欄をクリアしてすべての項目を表示してください
           </Text>
         </Box>
       )}
@@ -802,47 +1051,69 @@ export default function HelpPage() {
       {filteredSections.length > 0 && (
         <AccordionRoot
           multiple
-          defaultValue={searchQuery ? filteredSections.map((s) => s.id) : defaultOpenSections}
+          value={accordionValue}
+          onValueChange={(details) => setOpenSections(details.value)}
         >
-          <VStack align="stretch" gap={4}>
+          <VStack align="stretch" gap={5}>
             {filteredSections.map((section) => {
-              const isRelevant = user?.role ? section.roles.includes(user.role) : true
+              const colors = SECTION_COLORS[section.id] || SECTION_COLORS.overview
+              const relevant = !['overview', 'login', 'faq', 'contact'].includes(section.id) && isRelevantSection(section)
               return (
                 <AccordionItem
                   key={section.id}
                   value={section.id}
+                  id={`help-section-${section.id}`}
                   bg="bg.card"
-                  borderRadius="xl"
-                  border="1px solid"
-                  borderColor={isRelevant ? 'brand.200' : 'border.default'}
+                  borderRadius="2xl"
+                  border="2px solid"
+                  borderColor={relevant ? colors.border : 'border.default'}
                   overflow="hidden"
+                  shadow="sm"
                 >
                   <AccordionItemTrigger
                     px={6}
                     py={5}
                     cursor="pointer"
-                    _hover={{ bg: 'brand.50' }}
+                    _hover={{ bg: colors.bg }}
                     transition="background 0.2s"
                   >
-                    <HStack flex="1" gap={3}>
-                      <SectionIcon d={section.icon} />
-                      <Heading size="lg" color="text.primary" fontWeight="semibold">
-                        {section.title}
-                      </Heading>
-                      {isRelevant && user?.role && !['overview', 'login', 'faq', 'contact'].includes(section.id) && (
-                        <Badge
-                          bg="brand.50"
-                          color="brand.600"
-                          fontSize="sm"
-                          px={2}
-                          py={0.5}
-                          borderRadius="md"
-                        >
-                          あなた向け
-                        </Badge>
-                      )}
+                    <HStack flex="1" gap={4}>
+                      <Box
+                        w="48px" h="48px" minW="48px"
+                        borderRadius="xl"
+                        bg={colors.bg}
+                        border="1px solid"
+                        borderColor={colors.border}
+                        display="flex"
+                        alignItems="center"
+                        justifyContent="center"
+                      >
+                        <SectionIcon d={section.icon} color={colors.icon} size={26} />
+                      </Box>
+                      <Box flex="1" textAlign="left">
+                        <HStack gap={2} mb={0.5}>
+                          <Heading size="lg" color="text.primary" fontWeight="bold">
+                            {section.title}
+                          </Heading>
+                          {relevant && (
+                            <Badge
+                              bg={`${colors.icon}20`}
+                              color={colors.icon}
+                              fontSize="sm"
+                              px={2}
+                              py={0.5}
+                              borderRadius="md"
+                              fontWeight="semibold"
+                            >
+                              あなた向け
+                            </Badge>
+                          )}
+                        </HStack>
+                        <Text fontSize="md" color="text.muted">
+                          {section.description}
+                        </Text>
+                      </Box>
                     </HStack>
-                    <ChevronIcon />
                   </AccordionItemTrigger>
                   <AccordionItemContent>
                     <AccordionItemBody px={6} pb={6} pt={2}>
@@ -857,7 +1128,7 @@ export default function HelpPage() {
       )}
 
       {/* Footer */}
-      <Box mt={8} textAlign="center">
+      <Box mt={10} py={6} textAlign="center" borderTop="1px solid" borderColor="border.default">
         <Text fontSize="md" color="text.muted">
           ヘルパー管理システム ヘルプ
         </Text>
