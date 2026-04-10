@@ -1,5 +1,9 @@
+import { useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Routes, Route, Navigate } from 'react-router-dom'
+import { getProfile } from '@/api/users'
 import AppLayout from '@/components/layout/AppLayout'
+import LoadingState from '@/components/ui/LoadingState'
 import AdminAssignmentsPage from '@/pages/AdminAssignmentsPage'
 import AdminDashboardPage from '@/pages/AdminDashboardPage'
 import AdminUsersPage from '@/pages/AdminUsersPage'
@@ -17,7 +21,24 @@ import { useAuthStore } from '@/stores/auth'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated)
+  const logout = useAuthStore((state) => state.logout)
+
+  const { isLoading, isError } = useQuery({
+    queryKey: ['auth-validation'],
+    queryFn: getProfile,
+    enabled: isAuthenticated,
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  useEffect(() => {
+    if (isError) logout()
+  }, [isError, logout])
+
   if (!isAuthenticated) return <Navigate to="/login" replace />
+  if (isLoading) return <LoadingState type="form" count={4} />
+  if (isError) return <Navigate to="/login" replace />
+
   return <>{children}</>
 }
 

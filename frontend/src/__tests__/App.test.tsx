@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { screen } from '@testing-library/react'
+import { screen, waitFor } from '@testing-library/react'
 import { render } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -7,6 +7,12 @@ import { ChakraProvider, defaultSystem } from '@chakra-ui/react'
 import App from '../App'
 import { useAuthStore } from '@/stores/auth'
 import { mockSeniorUser } from '@/test-utils'
+
+// API モック
+const mockGetProfile = vi.fn()
+vi.mock('@/api/users', () => ({
+  getProfile: (...args: unknown[]) => mockGetProfile(...args),
+}))
 
 // ページモック（重い依存を避ける）
 vi.mock('@/pages/LoginPage', () => ({ default: () => <div>LoginPage</div> }))
@@ -56,41 +62,56 @@ describe('App ルーティング', () => {
   describe('認証済み', () => {
     beforeEach(() => {
       useAuthStore.getState().setAuth('token', 'refresh', mockSeniorUser)
+      mockGetProfile.mockResolvedValue({ id: '1', email: 'test@test.com', full_name: 'Test', role: 'senior' })
     })
 
-    it('/ でダッシュボードが表示されること', () => {
+    it('/ でダッシュボードが表示されること', async () => {
       renderApp('/')
-      expect(screen.getByText('DashboardPage')).toBeInTheDocument()
+      expect(await screen.findByText('DashboardPage')).toBeInTheDocument()
     })
 
-    it('/recipes でレシピページが表示されること', () => {
+    it('/recipes でレシピページが表示されること', async () => {
       renderApp('/recipes')
-      expect(screen.getByText('RecipesPage')).toBeInTheDocument()
+      expect(await screen.findByText('RecipesPage')).toBeInTheDocument()
     })
 
-    it('/menu で献立ページが表示されること', () => {
+    it('/menu で献立ページが表示されること', async () => {
       renderApp('/menu')
-      expect(screen.getByText('MenuPage')).toBeInTheDocument()
+      expect(await screen.findByText('MenuPage')).toBeInTheDocument()
     })
 
-    it('/tasks で作業管理ページが表示されること', () => {
+    it('/tasks で作業管理ページが表示されること', async () => {
       renderApp('/tasks')
-      expect(screen.getByText('TasksPage')).toBeInTheDocument()
+      expect(await screen.findByText('TasksPage')).toBeInTheDocument()
     })
 
-    it('/messages でメッセージページが表示されること', () => {
+    it('/messages でメッセージページが表示されること', async () => {
       renderApp('/messages')
-      expect(screen.getByText('MessagesPage')).toBeInTheDocument()
+      expect(await screen.findByText('MessagesPage')).toBeInTheDocument()
     })
 
-    it('/shopping で買い物ページが表示されること', () => {
+    it('/shopping で買い物ページが表示されること', async () => {
       renderApp('/shopping')
-      expect(screen.getByText('ShoppingPage')).toBeInTheDocument()
+      expect(await screen.findByText('ShoppingPage')).toBeInTheDocument()
     })
 
-    it('/profile でプロファイルページが表示されること', () => {
+    it('/profile でプロファイルページが表示されること', async () => {
       renderApp('/profile')
-      expect(screen.getByText('ProfilePage')).toBeInTheDocument()
+      expect(await screen.findByText('ProfilePage')).toBeInTheDocument()
+    })
+  })
+
+  describe('トークン無効', () => {
+    beforeEach(() => {
+      useAuthStore.getState().setAuth('expired-token', 'refresh', mockSeniorUser)
+      mockGetProfile.mockRejectedValue({ response: { status: 401 } })
+    })
+
+    it('無効なトークンでログインにリダイレクトされること', async () => {
+      renderApp('/')
+      await waitFor(() => {
+        expect(screen.getByText('LoginPage')).toBeInTheDocument()
+      })
     })
   })
 })
