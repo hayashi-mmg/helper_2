@@ -2,9 +2,11 @@
 set -euo pipefail
 
 COMPOSE_FILE="docker-compose.prod.yml"
+ENV_FILE=".env.production"
 TRAEFIK_COMPOSE_FILE="traefik/docker-compose.yml"
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$PROJECT_DIR"
+DC="docker compose --env-file $ENV_FILE -f $COMPOSE_FILE"
 
 # --- カラー出力 ---
 RED='\033[0;31m'
@@ -62,25 +64,25 @@ do_init() {
     check_prerequisites
 
     # .env 生成
-    if [ ! -f .env ]; then
-        info ".env ファイルを生成中..."
-        cp .env.production.example .env
+    if [ ! -f "$ENV_FILE" ]; then
+        info "$ENV_FILE ファイルを生成中..."
+        cp .env.production.example "$ENV_FILE"
 
         POSTGRES_PASSWORD=$(openssl rand -hex 16)
         REDIS_PASSWORD=$(openssl rand -hex 16)
         JWT_SECRET_KEY=$(openssl rand -hex 32)
 
-        sed -i "s/CHANGE_ME_openssl_rand_hex_16/${POSTGRES_PASSWORD}/" .env
+        sed -i "s/CHANGE_ME_openssl_rand_hex_16/${POSTGRES_PASSWORD}/" "$ENV_FILE"
         # Redis用パスワード (2番目の出現)
-        sed -i "0,/CHANGE_ME_openssl_rand_hex_16/s/CHANGE_ME_openssl_rand_hex_16/$(openssl rand -hex 16)/" .env
-        sed -i "s/CHANGE_ME_openssl_rand_hex_32/${JWT_SECRET_KEY}/" .env
+        sed -i "0,/CHANGE_ME_openssl_rand_hex_16/s/CHANGE_ME_openssl_rand_hex_16/$(openssl rand -hex 16)/" "$ENV_FILE"
+        sed -i "s/CHANGE_ME_openssl_rand_hex_32/${JWT_SECRET_KEY}/" "$ENV_FILE"
 
-        chmod 600 .env
-        ok ".env ファイルを生成しました"
-        warn "必ず .env のドメイン設定 (DOMAIN, CORS_ORIGINS) を編集してください"
-        warn "  nano .env"
+        chmod 600 "$ENV_FILE"
+        ok "$ENV_FILE ファイルを生成しました"
+        warn "必ず $ENV_FILE のドメイン設定 (DOMAIN, CORS_ORIGINS) を編集してください"
+        warn "  nano $ENV_FILE"
     else
-        ok ".env ファイルは既に存在します"
+        ok "$ENV_FILE ファイルは既に存在します"
     fi
 
     # Traefik起動
@@ -88,17 +90,17 @@ do_init() {
 
     # イメージビルド
     info "Dockerイメージをビルド中..."
-    docker compose -f "$COMPOSE_FILE" build
+    $DC build
     ok "ビルド完了"
 
     # DB & Redis 起動
     info "データベースとRedisを起動中..."
-    docker compose -f "$COMPOSE_FILE" up -d db redis
+    $DC up -d db redis
 
     info "データベースの起動を待機中..."
     local retries=0
     while [ $retries -lt 30 ]; do
-        if docker compose -f "$COMPOSE_FILE" exec -T db pg_isready -U "$(grep POSTGRES_USER .env | cut -d= -f2)" &>/dev/null; then
+        if $DC exec -T db pg_isready -U "$(grep POSTGRES_USER "$ENV_FILE" | cut -d= -f2)" &>/dev/null; then
             break
         fi
         retries=$((retries + 1))
@@ -113,12 +115,12 @@ do_init() {
 
     # マイグレーション
     info "データベースマイグレーションを実行中..."
-    docker compose -f "$COMPOSE_FILE" run --rm backend alembic upgrade head
+    $DC run --rm backend alembic upgrade head
     ok "マイグレーション完了"
 
     # 全サービス起動
     info "全サービスを起動中..."
-    docker compose -f "$COMPOSE_FILE" up -d
+    $DC up -d
     ok "全サービス起動完了"
 
     sleep 5
@@ -133,8 +135,8 @@ do_update() {
     info "=== アップデートデプロイ ==="
     check_prerequisites
 
-    if [ ! -f .env ]; then
-        err ".env ファイルが見つかりません。先に ./deploy.sh init を実行してください。"
+    if [ ! -f "$ENV_FILE" ]; then
+        err "$ENV_FILE ファイルが見つかりません。先に ./deploy.sh init を実行してください。"
         exit 1
     fi
 
@@ -148,18 +150,18 @@ do_update() {
 
     # イメージ再ビルド
     info "Dockerイメージを再ビルド中..."
-    docker compose -f "$COMPOSE_FILE" build
+    $DC build
     ok "ビルド完了"
 
     # マイグレーション
     info "データベースマイグレーションを確認中..."
-    docker compose -f "$COMPOSE_FILE" run --rm backend alembic upgrade head
+    $DC run --rm backend alembic upgrade head
     ok "マイグレーション完了"
 
     # ローリング再起動
     info "サービスを再起動中..."
-    docker compose -f "$COMPOSE_FILE" up -d --no-deps --build backend
-    docker compose -f "$COMPOSE_FILE" up -d --no-deps --build frontend
+    $DC up -d --no-deps --build backend
+    $DC up -d --no-deps --build frontend
     ok "再起動完了"
 
     sleep 5
@@ -176,7 +178,7 @@ do_status() {
     echo ""
 
     info "=== サービス状態 ==="
-    docker compose -f "$COMPOSE_FILE" ps
+    $DC ps
     echo ""
 
     info "=== ヘルスチェック ==="
@@ -203,9 +205,9 @@ do_logs() {
     if [ "$service" = "traefik" ]; then
         docker logs -f --tail=100 traefik
     elif [ -n "$service" ]; then
-        docker compose -f "$COMPOSE_FILE" logs -f --tail=100 "$service"
+        $DC logs -f --tail=100 "$service"
     else
-        docker compose -f "$COMPOSE_FILE" logs -f --tail=100
+        $DC logs -f --tail=100
     fi
 }
 
@@ -218,12 +220,12 @@ do_backup() {
     mkdir -p "$backup_dir"
 
     local db_name
-    db_name=$(grep POSTGRES_DB .env | cut -d= -f2)
+    db_name=$(grep POSTGRES_DB "$ENV_FILE" | cut -d= -f2)
     local db_user
-    db_user=$(grep POSTGRES_USER .env | cut -d= -f2)
+    db_user=$(grep POSTGRES_USER "$ENV_FILE" | cut -d= -f2)
 
     info "バックアップを作成中..."
-    docker compose -f "$COMPOSE_FILE" exec -T db \
+    $DC exec -T db \
         pg_dump -U "$db_user" -d "$db_name" --format=custom \
         > "${backup_dir}/db_${timestamp}.dump"
 
@@ -234,7 +236,7 @@ do_backup() {
 # --- 停止 ---
 do_stop() {
     info "アプリサービスを停止中..."
-    docker compose -f "$COMPOSE_FILE" down
+    $DC down
     ok "アプリサービス停止完了"
     warn "Traefikは停止していません。停止する場合: docker compose -f $TRAEFIK_COMPOSE_FILE down"
 }
