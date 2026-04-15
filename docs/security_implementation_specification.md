@@ -23,7 +23,7 @@
 ### 1.2 準拠法令・ガイドライン
 - **個人情報保護法**（改正版）
 - **医療・介護分野におけるサイバーセキュリティ対策ガイドライン**
-- **OWASP Top 10**（Webアプリケーションセキュリティ）
+- **OWASP Top 10:2021/2025**（Webアプリケーションセキュリティ、2025版でサプライチェーン障害が新設）
 - **NIST Cybersecurity Framework**
 
 ### 1.3 脅威モデル
@@ -1506,30 +1506,278 @@ class VulnerabilityScanner:
                 "error": str(e)
             }
     
+    def scan_npm_dependencies(self) -> Dict[str, Any]:
+        """フロントエンド（npm）依存関係の脆弱性スキャン"""
+        try:
+            # npm auditによる脆弱性スキャン
+            result = subprocess.run(
+                ["npm", "audit", "--json", "--audit-level=high"],
+                capture_output=True,
+                text=True,
+                cwd="/app/frontend"
+            )
+            
+            if result.stdout:
+                audit_result = json.loads(result.stdout)
+                vulnerabilities = audit_result.get("vulnerabilities", {})
+                
+                # 重要度別集計
+                severity_counts = {"critical": 0, "high": 0, "moderate": 0, "low": 0}
+                for vuln_name, vuln_info in vulnerabilities.items():
+                    severity = vuln_info.get("severity", "low")
+                    if severity in severity_counts:
+                        severity_counts[severity] += 1
+                
+                return {
+                    "status": "completed",
+                    "total_count": len(vulnerabilities),
+                    "severity_counts": severity_counts,
+                    "vulnerabilities": vulnerabilities
+                }
+            else:
+                return {
+                    "status": "completed",
+                    "total_count": 0,
+                    "severity_counts": {"critical": 0, "high": 0, "moderate": 0, "low": 0},
+                    "vulnerabilities": {}
+                }
+                
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+    
+    def verify_npm_signatures(self) -> Dict[str, Any]:
+        """npmパッケージ署名の検証"""
+        try:
+            result = subprocess.run(
+                ["npm", "audit", "signatures"],
+                capture_output=True,
+                text=True,
+                cwd="/app/frontend"
+            )
+            
+            return {
+                "status": "completed",
+                "output": result.stdout,
+                "errors": result.stderr if result.returncode != 0 else None
+            }
+                
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+    
     def generate_security_report(self) -> Dict[str, Any]:
         """セキュリティレポート生成"""
         dependency_scan = self.scan_dependencies()
+        npm_scan = self.scan_npm_dependencies()
         docker_scan = self.scan_docker_image("helper-system:latest")
         
         return {
             "timestamp": datetime.utcnow().isoformat(),
             "dependency_vulnerabilities": dependency_scan,
+            "npm_vulnerabilities": npm_scan,
             "docker_vulnerabilities": docker_scan,
-            "recommendations": self._generate_recommendations(dependency_scan, docker_scan)
+            "recommendations": self._generate_recommendations(
+                dependency_scan, npm_scan, docker_scan
+            )
         }
     
-    def _generate_recommendations(self, dep_scan: Dict, docker_scan: Dict) -> List[str]:
+    def _generate_recommendations(self, dep_scan: Dict, npm_scan: Dict, 
+                                  docker_scan: Dict) -> List[str]:
         """推奨事項生成"""
         recommendations = []
         
         if dep_scan.get("total_count", 0) > 0:
-            recommendations.append("依存関係の脆弱性が検出されました。パッケージの更新を検討してください。")
+            recommendations.append("Python依存関係の脆弱性が検出されました。パッケージの更新を検討してください。")
+        
+        if npm_scan.get("total_count", 0) > 0:
+            severity = npm_scan.get("severity_counts", {})
+            if severity.get("critical", 0) > 0 or severity.get("high", 0) > 0:
+                recommendations.append(
+                    f"npm依存関係に重大な脆弱性が検出されました（Critical: {severity.get('critical', 0)}, "
+                    f"High: {severity.get('high', 0)}）。即座に対応してください。"
+                )
+            else:
+                recommendations.append("npm依存関係に脆弱性が検出されました。パッケージの更新を検討してください。")
         
         if docker_scan.get("status") == "completed":
             recommendations.append("Dockerイメージのセキュリティスキャンを定期的に実行してください。")
         
         return recommendations
 ```
+
+#### 7.2.2 フロントエンド サプライチェーンセキュリティ
+
+OWASP Top 10:2025でソフトウェアサプライチェーンの障害が新たにランクイン（A06:2025相当）したことを踏まえ、フロントエンド（React/TypeScript/npm）の依存関係に対するセキュリティ対策を実施する。
+
+##### a) GitHub Dependabot設定
+
+脆弱性アラートの自動検出と依存関係の定期更新を設定する。
+
+```yaml
+# .github/dependabot.yml
+version: 2
+updates:
+  # フロントエンド（npm）依存関係
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Tokyo"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "frontend"
+    # セキュリティアップデートは自動マージ対象
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+
+  # バックエンド（pip）依存関係
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Tokyo"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "backend"
+```
+
+**設定ポイント**:
+- GitHub Advisory Databaseと照合し、既知の脆弱性を自動検出
+- 直接依存・間接（推移的）依存の両方を監視対象に含める
+- セキュリティアラートはリポジトリのSettings → Security → Dependabot alertsで有効化
+
+##### b) Dependency Review Action
+
+PRマージ時に新たに追加される依存関係の脆弱性をブロックする。
+
+```yaml
+# .github/workflows/dependency-review.yml
+name: Dependency Review
+on:
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: always
+          deny-licenses: GPL-3.0, AGPL-3.0
+```
+
+**設定ポイント**:
+- `fail-on-severity: high` により、High以上の脆弱性を含むPRをブロック
+- ライセンスリスク（GPL-3.0等）も同時にチェック
+- PRコメントで脆弱性サマリーを自動通知
+
+##### c) npm audit の CI/CD 統合
+
+ビルドパイプラインにnpm auditを組み込み、脆弱性のあるビルドを防止する。
+
+```yaml
+# .github/workflows/ci.yml（既存CIワークフローに追加）
+  security-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        run: npm audit --audit-level=high
+
+      - name: Verify package signatures
+        run: npm audit signatures
+```
+
+##### d) package-lock.json 厳密管理
+
+再現性のあるビルドと改ざん防止のため、`package-lock.json`を厳密に管理する。
+
+**運用ルール**:
+- `npm ci`（`npm install`ではなく）を使用し、lockfileと厳密に一致するインストールを保証
+- `package-lock.json`は必ずGitにコミットし、バージョン管理対象とする
+- lockfileの差分はPRレビュー時に確認必須
+- CI/CD環境では常に`npm ci`を使用（Dockerfile内でも同様）
+
+```dockerfile
+# frontend/Dockerfile（既存設定との整合）
+COPY package.json package-lock.json ./
+RUN npm ci --only=production
+```
+
+##### e) .npmrc セキュリティ設定
+
+インストール時の悪意あるスクリプト実行を防止する。
+
+```ini
+# frontend/.npmrc
+# インストール時のライフサイクルスクリプトを無効化
+ignore-scripts=true
+
+# npm auditを自動実行
+audit=true
+
+# audit時のレベル閾値
+audit-level=high
+
+# レジストリの明示指定（サプライチェーン攻撃防止）
+registry=https://registry.npmjs.org/
+```
+
+**注意**: `ignore-scripts=true`設定時、ビルドに必要なpostinstallスクリプトを持つパッケージ（例: `esbuild`, `sharp`等）は個別に`npm rebuild <package>`を実行する必要がある。
+
+##### f) package.json overrides による脆弱性修正
+
+間接（推移的）依存の脆弱なバージョンを強制的に修正する。
+
+```json
+// frontend/package.json
+{
+  "overrides": {
+    "vulnerable-package": ">=2.0.1"
+  }
+}
+```
+
+**運用ルール**:
+- `npm audit`で検出された間接依存の脆弱性に対し、直接的なアップデートが不可能な場合にoverridesを使用
+- overrides適用後は`npm ls <package>`で依存ツリーを確認し、互換性を検証
+- 根本対応（直接依存のアップデート）が可能になった時点でoverridesを削除
 
 ---
 
@@ -1867,6 +2115,14 @@ class DataProtectionManager:
 - [ ] 監査対応機能
 - [ ] データ削除・匿名化機能
 - [ ] コンプライアンス確認
+
+### 10.5 サプライチェーンセキュリティ
+- [ ] GitHub Dependabot有効化（npm + pip）
+- [ ] Dependency Review Action設定
+- [ ] npm audit CI/CDパイプライン統合
+- [ ] .npmrc セキュリティ設定（ignore-scripts, audit）
+- [ ] package-lock.json厳密管理（npm ci運用）
+- [ ] npm audit signatures検証の定期実行
 
 ---
 

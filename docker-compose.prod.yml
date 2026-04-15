@@ -53,14 +53,14 @@ services:
       - "traefik.http.routers.helper5-auth.entrypoints=websecure"
       - "traefik.http.routers.helper5-auth.tls.certresolver=letsencrypt"
       - "traefik.http.routers.helper5-auth.priority=30"
-      - "traefik.http.routers.helper5-auth.middlewares=rate-limit-auth@file,security-headers@file,gzip-compress@file,request-body-limit@file"
+      - "traefik.http.routers.helper5-auth.middlewares=crowdsec-bouncer@file,rate-limit-auth@file,security-headers@file,gzip-compress@file,request-body-limit@file"
       - "traefik.http.routers.helper5-auth.service=helper5-backend"
       # --- APIエンドポイント (レート制限: 10r/s) ---
       - "traefik.http.routers.helper5-api.rule=Host(`h.kokoro-shift.jp`) && PathPrefix(`/api/`)"
       - "traefik.http.routers.helper5-api.entrypoints=websecure"
       - "traefik.http.routers.helper5-api.tls.certresolver=letsencrypt"
       - "traefik.http.routers.helper5-api.priority=20"
-      - "traefik.http.routers.helper5-api.middlewares=rate-limit-api@file,security-headers@file,gzip-compress@file,request-body-limit@file"
+      - "traefik.http.routers.helper5-api.middlewares=crowdsec-bouncer@file,rate-limit-api@file,security-headers@file,gzip-compress@file,request-body-limit@file"
       - "traefik.http.routers.helper5-api.service=helper5-backend"
       # --- WebSocket ---
       - "traefik.http.routers.helper5-ws.rule=Host(`h.kokoro-shift.jp`) && PathPrefix(`/ws/`)"
