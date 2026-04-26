@@ -15,11 +15,12 @@ set -euo pipefail
 # --- 定数 ---
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-COMPOSE_FILE="$PROJECT_DIR/docker-compose.prod.yml"
+COMPOSE_FILE="${COMPOSE_FILE:-$PROJECT_DIR/docker-compose.prod.yml}"
+ENV_FILE="${ENV_FILE:-$ENV_FILE}"
 # BACKUP_DIR (base) は (1) shell env (2) .env.production の BACKUP_DIR= (3) /backups の優先順
 ENV_BACKUP_DIR=""
-if [ -z "${BACKUP_DIR:-}" ] && [ -f "$PROJECT_DIR/.env.production" ]; then
-    ENV_BACKUP_DIR=$(grep '^BACKUP_DIR=' "$PROJECT_DIR/.env.production" 2>/dev/null | cut -d= -f2 || true)
+if [ -z "${BACKUP_DIR:-}" ] && [ -f "$ENV_FILE" ]; then
+    ENV_BACKUP_DIR=$(grep '^BACKUP_DIR=' "$ENV_FILE" 2>/dev/null | cut -d= -f2 || true)
 fi
 BACKUP_BASE_DIR="${BACKUP_DIR:-${ENV_BACKUP_DIR:-/backups}}"
 BACKUP_DIR="${BACKUP_BASE_DIR}/logs"
@@ -31,21 +32,21 @@ S3_ENDPOINT_URL="${BACKUP_S3_ENDPOINT_URL:-}"
 S3_PROFILE="${AWS_PROFILE:-}"
 
 # .env.production から DB接続情報を読み込む
-if [ -f "$PROJECT_DIR/.env.production" ]; then
-    POSTGRES_USER=$(grep '^POSTGRES_USER=' "$PROJECT_DIR/.env.production" | cut -d= -f2)
-    POSTGRES_DB=$(grep '^POSTGRES_DB=' "$PROJECT_DIR/.env.production" | cut -d= -f2)
+if [ -f "$ENV_FILE" ]; then
+    POSTGRES_USER=$(grep '^POSTGRES_USER=' "$ENV_FILE" | cut -d= -f2)
+    POSTGRES_DB=$(grep '^POSTGRES_DB=' "$ENV_FILE" | cut -d= -f2)
 
     if [ -z "$S3_BUCKET" ]; then
-        S3_BUCKET=$(grep '^AWS_S3_BUCKET=' "$PROJECT_DIR/.env.production" | cut -d= -f2 || true)
+        S3_BUCKET=$(grep '^AWS_S3_BUCKET=' "$ENV_FILE" | cut -d= -f2 || true)
     fi
     if [ -z "$S3_ENDPOINT_URL" ]; then
-        S3_ENDPOINT_URL=$(grep '^BACKUP_S3_ENDPOINT_URL=' "$PROJECT_DIR/.env.production" | cut -d= -f2 || true)
+        S3_ENDPOINT_URL=$(grep '^BACKUP_S3_ENDPOINT_URL=' "$ENV_FILE" | cut -d= -f2 || true)
     fi
     if [ -z "$S3_PROFILE" ]; then
-        S3_PROFILE=$(grep '^AWS_PROFILE=' "$PROJECT_DIR/.env.production" | cut -d= -f2 || true)
+        S3_PROFILE=$(grep '^AWS_PROFILE=' "$ENV_FILE" | cut -d= -f2 || true)
     fi
 else
-    echo "[$TIMESTAMP] ERROR: .env.production ファイルが見つかりません: $PROJECT_DIR/.env.production" >&2
+    echo "[$TIMESTAMP] ERROR: .env.production ファイルが見つかりません: $ENV_FILE" >&2
     exit 1
 fi
 
@@ -105,12 +106,12 @@ main() {
 
     # 2. 監査ログ（DB: audit_logs テーブル）
     info "監査ログ(audit_logs)をバックアップ中..."
-    if docker-compose -f "$COMPOSE_FILE" exec -T db \
+    if docker compose -f "$COMPOSE_FILE" exec -T db \
         psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
         "SELECT 1 FROM information_schema.tables WHERE table_name = 'audit_logs'" \
         | grep -q "1"; then
 
-        docker-compose -f "$COMPOSE_FILE" exec -T db \
+        docker compose -f "$COMPOSE_FILE" exec -T db \
             psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
             "COPY (SELECT * FROM audit_logs WHERE created_at >= CURRENT_DATE - INTERVAL '1 day') TO STDOUT WITH CSV HEADER" \
             | gzip > "$BACKUP_DIR/audit/audit_logs_${DATE}.csv.gz"
@@ -121,12 +122,12 @@ main() {
 
     # 3. データアクセスログ（DB: data_access_logs テーブル）
     info "データアクセスログ(data_access_logs)をバックアップ中..."
-    if docker-compose -f "$COMPOSE_FILE" exec -T db \
+    if docker compose -f "$COMPOSE_FILE" exec -T db \
         psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
         "SELECT 1 FROM information_schema.tables WHERE table_name = 'data_access_logs'" \
         | grep -q "1"; then
 
-        docker-compose -f "$COMPOSE_FILE" exec -T db \
+        docker compose -f "$COMPOSE_FILE" exec -T db \
             psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
             "COPY (SELECT * FROM data_access_logs WHERE created_at >= CURRENT_DATE - INTERVAL '1 day') TO STDOUT WITH CSV HEADER" \
             | gzip > "$BACKUP_DIR/data-access/data_access_logs_${DATE}.csv.gz"
@@ -137,12 +138,12 @@ main() {
 
     # 4. コンプライアンスログ（DB: compliance_logs テーブル）
     info "コンプライアンスログ(compliance_logs)をバックアップ中..."
-    if docker-compose -f "$COMPOSE_FILE" exec -T db \
+    if docker compose -f "$COMPOSE_FILE" exec -T db \
         psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
         "SELECT 1 FROM information_schema.tables WHERE table_name = 'compliance_logs'" \
         | grep -q "1"; then
 
-        docker-compose -f "$COMPOSE_FILE" exec -T db \
+        docker compose -f "$COMPOSE_FILE" exec -T db \
             psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
             "COPY (SELECT * FROM compliance_logs WHERE created_at >= CURRENT_DATE - INTERVAL '1 day') TO STDOUT WITH CSV HEADER" \
             | gzip > "$BACKUP_DIR/compliance/compliance_logs_${DATE}.csv.gz"

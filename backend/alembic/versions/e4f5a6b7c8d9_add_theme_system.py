@@ -96,10 +96,14 @@ def upgrade() -> None:
     )
 
     # --- seed default_theme_id system setting ---
+    # setting_value は jsonb 型なので CAST が必須。明示しないと
+    # asyncpg/SQLAlchemy がパラメータを VARCHAR としてバインドし、
+    # `column "setting_value" is of type jsonb but expression is of type character varying`
+    # で失敗する。
     op.execute(
         sa.text(
             "INSERT INTO system_settings (id, setting_key, setting_value, category, description, is_sensitive, created_at, updated_at) "
-            "VALUES (:id, :key, :value, :category, :description, false, :now, :now) "
+            "VALUES (:id, :key, CAST(:value AS jsonb), :category, :description, false, :now, :now) "
             "ON CONFLICT (setting_key) DO NOTHING"
         ).bindparams(
             id=uuid.uuid4(),

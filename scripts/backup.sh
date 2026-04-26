@@ -19,11 +19,13 @@ set -euo pipefail
 # --- 定数 ---
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-COMPOSE_FILE="$PROJECT_DIR/docker-compose.prod.yml"
-# BACKUP_DIR は (1) shell env (2) .env.production の BACKUP_DIR= (3) /backups の優先順
+# COMPOSE_FILE / ENV_FILE は env で上書き可能 (ローカル検証用)
+COMPOSE_FILE="${COMPOSE_FILE:-$PROJECT_DIR/docker-compose.prod.yml}"
+ENV_FILE="${ENV_FILE:-$PROJECT_DIR/.env.production}"
+# BACKUP_DIR は (1) shell env (2) ENV_FILE の BACKUP_DIR= (3) /backups の優先順
 ENV_BACKUP_DIR=""
-if [ -z "${BACKUP_DIR:-}" ] && [ -f "$PROJECT_DIR/.env.production" ]; then
-    ENV_BACKUP_DIR=$(grep '^BACKUP_DIR=' "$PROJECT_DIR/.env.production" 2>/dev/null | cut -d= -f2 || true)
+if [ -z "${BACKUP_DIR:-}" ] && [ -f "$ENV_FILE" ]; then
+    ENV_BACKUP_DIR=$(grep '^BACKUP_DIR=' "$ENV_FILE" 2>/dev/null | cut -d= -f2 || true)
 fi
 BACKUP_DIR="${BACKUP_DIR:-${ENV_BACKUP_DIR:-/backups}}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -34,23 +36,24 @@ S3_ENDPOINT_URL="${BACKUP_S3_ENDPOINT_URL:-}"
 S3_PROFILE="${AWS_PROFILE:-}"
 
 # DB設定読み込み
-if [ -f "$PROJECT_DIR/.env.production" ]; then
-    POSTGRES_USER=$(grep '^POSTGRES_USER=' "$PROJECT_DIR/.env.production" | cut -d= -f2)
-    POSTGRES_DB=$(grep '^POSTGRES_DB=' "$PROJECT_DIR/.env.production" | cut -d= -f2)
-    REDIS_PASSWORD=$(grep '^REDIS_PASSWORD=' "$PROJECT_DIR/.env.production" | cut -d= -f2 || true)
+if [ -f "$ENV_FILE" ]; then
+    POSTGRES_USER=$(grep '^POSTGRES_USER=' "$ENV_FILE" | cut -d= -f2)
+    POSTGRES_DB=$(grep '^POSTGRES_DB=' "$ENV_FILE" | cut -d= -f2)
+    REDIS_PASSWORD=$(grep '^REDIS_PASSWORD=' "$ENV_FILE" | cut -d= -f2 || true)
 
-    # オフサイトストレージ設定 (.env.productionに記載があれば優先)
+    # オフサイトストレージ設定 (env fileに記載があれば優先)
     if [ -z "$S3_BUCKET" ]; then
-        S3_BUCKET=$(grep '^AWS_S3_BUCKET=' "$PROJECT_DIR/.env.production" | cut -d= -f2 || true)
+        S3_BUCKET=$(grep '^AWS_S3_BUCKET=' "$ENV_FILE" | cut -d= -f2 || true)
     fi
     if [ -z "$S3_ENDPOINT_URL" ]; then
-        S3_ENDPOINT_URL=$(grep '^BACKUP_S3_ENDPOINT_URL=' "$PROJECT_DIR/.env.production" | cut -d= -f2 || true)
+        S3_ENDPOINT_URL=$(grep '^BACKUP_S3_ENDPOINT_URL=' "$ENV_FILE" | cut -d= -f2 || true)
     fi
     if [ -z "$S3_PROFILE" ]; then
-        S3_PROFILE=$(grep '^AWS_PROFILE=' "$PROJECT_DIR/.env.production" | cut -d= -f2 || true)
+        S3_PROFILE=$(grep '^AWS_PROFILE=' "$ENV_FILE" | cut -d= -f2 || true)
     fi
 else
-    echo "[$LOG_TIMESTAMP] ERROR: .env.production ファイルが見つかりません: $PROJECT_DIR/.env.production" >&2
+    echo "[$LOG_TIMESTAMP] ERROR: env file が見つかりません: $ENV_FILE" >&2
+    echo "[$LOG_TIMESTAMP]        ENV_FILE 環境変数で上書き可能 (例: ENV_FILE=/tmp/test.env)" >&2
     exit 1
 fi
 
@@ -103,7 +106,7 @@ backup_postgres() {
 
     local dump_file="$db_backup_dir/backup_${POSTGRES_DB}_${TIMESTAMP}.sql.gz"
 
-    docker-compose -f "$COMPOSE_FILE" exec -T db \
+    docker compose -f "$COMPOSE_FILE" exec -T db \
         pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=plain \
         | gzip > "$dump_file"
 
@@ -133,18 +136,18 @@ backup_redis() {
         redis_auth="-a $REDIS_PASSWORD"
     fi
 
-    docker-compose -f "$COMPOSE_FILE" exec -T redis \
+    docker compose -f "$COMPOSE_FILE" exec -T redis \
         redis-cli $redis_auth BGSAVE 2>/dev/null || true
 
     # BGSAVE完了待ち（最大30秒）
     local retries=0
     while [ $retries -lt 15 ]; do
         local bgsave_status
-        bgsave_status=$(docker-compose -f "$COMPOSE_FILE" exec -T redis \
+        bgsave_status=$(docker compose -f "$COMPOSE_FILE" exec -T redis \
             redis-cli $redis_auth LASTSAVE 2>/dev/null || echo "")
         sleep 2
         local new_status
-        new_status=$(docker-compose -f "$COMPOSE_FILE" exec -T redis \
+        new_status=$(docker compose -f "$COMPOSE_FILE" exec -T redis \
             redis-cli $redis_auth LASTSAVE 2>/dev/null || echo "")
         if [ "$bgsave_status" != "$new_status" ] || [ $retries -gt 0 ]; then
             break
@@ -154,7 +157,7 @@ backup_redis() {
 
     # dump.rdb をコピー
     local container_name
-    container_name=$(docker-compose -f "$COMPOSE_FILE" ps -q redis 2>/dev/null || true)
+    container_name=$(docker compose -f "$COMPOSE_FILE" ps -q redis 2>/dev/null || true)
     if [ -n "$container_name" ]; then
         docker cp "${container_name}:/data/dump.rdb" \
             "$redis_backup_dir/redis_${DATE}.rdb" 2>/dev/null || {
