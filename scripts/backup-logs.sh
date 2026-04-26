@@ -16,8 +16,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 COMPOSE_FILE="$PROJECT_DIR/docker-compose.prod.yml"
-BACKUP_DIR="/backups/logs"
-LAST_BACKUP_MARKER="/backups/.last-log-backup"
+# BACKUP_DIR (base) は (1) shell env (2) .env.production の BACKUP_DIR= (3) /backups の優先順
+ENV_BACKUP_DIR=""
+if [ -z "${BACKUP_DIR:-}" ] && [ -f "$PROJECT_DIR/.env.production" ]; then
+    ENV_BACKUP_DIR=$(grep '^BACKUP_DIR=' "$PROJECT_DIR/.env.production" 2>/dev/null | cut -d= -f2 || true)
+fi
+BACKUP_BASE_DIR="${BACKUP_DIR:-${ENV_BACKUP_DIR:-/backups}}"
+BACKUP_DIR="${BACKUP_BASE_DIR}/logs"
+LAST_BACKUP_MARKER="${BACKUP_BASE_DIR}/.last-log-backup"
 DATE=$(date +%Y%m%d)
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 S3_BUCKET="${AWS_S3_BUCKET:-}"
