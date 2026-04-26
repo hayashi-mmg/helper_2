@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     # Log Integrity
     LOG_HMAC_KEY: str = "dev-hmac-key-change-in-production"
 
+    # Ollama (AI献立提案)
+    OLLAMA_BASE_URL: str = "http://host.docker.internal:11434"
+    OLLAMA_MODEL: str = "gemma4:latest"
+    OLLAMA_TIMEOUT_SECONDS: int = 240
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",")]

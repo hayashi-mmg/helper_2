@@ -11,7 +11,10 @@ import LoadingState from '@/components/ui/LoadingState'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { toaster } from '@/components/ui/toaster'
 import ShoppingListGenerator from '@/components/menu/ShoppingListGenerator'
+import MenuSuggester from '@/components/menu/MenuSuggester'
+import { useAuthStore } from '@/stores/auth'
 import { toLocalDateString } from '@/utils/date'
+import { buildImportJson } from '@/utils/menuExport'
 
 const DAYS = [
   { key: 'monday', label: '月曜日', short: '月' },
@@ -80,6 +83,7 @@ export default function MenuPage() {
   const weekStart = useMemo(() => getWeekStartDate(weekOffset), [weekOffset])
   const queryClient = useQueryClient()
   const [showClearConfirm, setShowClearConfirm] = useState(false)
+  const currentUser = useAuthStore((state) => state.user)
 
   // Recipe picker state
   const [pickerSlot, setPickerSlot] = useState<{ day: string; meal: string } | null>(null)
@@ -198,6 +202,28 @@ export default function MenuPage() {
             size="lg"
             minH="48px"
             variant="outline"
+            onClick={async () => {
+              if (!menuData) return
+              try {
+                const json = await buildImportJson(menuData)
+                await navigator.clipboard.writeText(JSON.stringify(json, null, 2))
+                toaster.success({ title: 'インポートJSONをコピーしました' })
+              } catch (e) {
+                toaster.create({ title: `コピーに失敗: ${(e as Error).message}`, type: 'error' })
+              }
+            }}
+            cursor="pointer"
+            disabled={(menuData?.summary.total_recipes ?? 0) === 0}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+            インポートJSONをコピー
+          </Button>
+          <Button
+            size="lg"
+            minH="48px"
+            variant="outline"
             onClick={() => copyMutation.mutate()}
             loading={copyMutation.isPending}
             cursor="pointer"
@@ -274,6 +300,13 @@ export default function MenuPage() {
             平均調理時間: {menuData.summary.avg_cooking_time}分
           </Badge>
         </HStack>
+      )}
+
+      {currentUser?.role === 'senior' && (
+        <MenuSuggester
+          weekStart={weekStart}
+          onApplied={() => queryClient.invalidateQueries({ queryKey: ['menu', weekStart] })}
+        />
       )}
 
       {isLoading ? (

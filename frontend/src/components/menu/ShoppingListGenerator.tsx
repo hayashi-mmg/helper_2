@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Box, Button, Text, VStack, HStack, Badge, Input,
 } from '@chakra-ui/react'
-import { generateFromMenu, toggleExclude } from '@/api/shopping'
+import { generateFromMenu, organizeShoppingList, toggleExclude } from '@/api/shopping'
 import type { GenerateFromMenuResponse, GeneratedItem } from '@/types'
 import { toaster } from '@/components/ui/toaster'
 
@@ -33,6 +33,27 @@ export default function ShoppingListGenerator({ weekStart, hasRecipes }: Props) 
     },
     onError: () => {
       toaster.error({ title: '献立にレシピが登録されていないか、食材データがありません' })
+    },
+  })
+
+  const organizeMutation = useMutation({
+    mutationFn: () => {
+      if (!result) throw new Error('no result')
+      return organizeShoppingList(result.id)
+    },
+    onSuccess: (data) => {
+      setResult(data)
+      queryClient.invalidateQueries({ queryKey: ['shopping'] })
+      toaster.success({ title: `AIで整理しました（${data.summary.total_items}品）` })
+    },
+    onError: (err: unknown) => {
+      const e = err as { response?: { status?: number; data?: { detail?: string } } }
+      const detail = e?.response?.data?.detail
+      const status = e?.response?.status
+      if (detail) toaster.error({ title: detail })
+      else if (status === 503) toaster.error({ title: '整理サービスに接続できません' })
+      else if (status === 504) toaster.error({ title: '整理に時間がかかりすぎました' })
+      else toaster.error({ title: '整理に失敗しました' })
     },
   })
 
@@ -161,20 +182,39 @@ export default function ShoppingListGenerator({ weekStart, hasRecipes }: Props) 
 
   return (
     <Box mt={8} bg="bg.card" p={6} borderRadius="xl" border="1px solid" borderColor="border.default">
-      <HStack justify="space-between" mb={4}>
+      <HStack justify="space-between" mb={4} flexWrap="wrap" gap={2}>
         <Text fontSize="xl" fontWeight="bold" color="text.primary">
           買い物リスト
         </Text>
-        <Button
-          size="md"
-          minH="44px"
-          variant="outline"
-          onClick={() => { setResult(null); setShowForm(false) }}
-          cursor="pointer"
-          fontSize="md"
-        >
-          閉じる
-        </Button>
+        <HStack gap={2}>
+          <Button
+            size="md"
+            minH="44px"
+            bg="brand.600"
+            color="white"
+            _hover={{ bg: 'brand.700' }}
+            onClick={() => organizeMutation.mutate()}
+            loading={organizeMutation.isPending}
+            loadingText="AIが整理中…"
+            cursor="pointer"
+            fontSize="md"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2l1.8 5.6h5.9l-4.8 3.5 1.8 5.6-4.7-3.5-4.7 3.5 1.8-5.6L4.3 7.6h5.9L12 2z" />
+            </svg>
+            AIで整理
+          </Button>
+          <Button
+            size="md"
+            minH="44px"
+            variant="outline"
+            onClick={() => { setResult(null); setShowForm(false) }}
+            cursor="pointer"
+            fontSize="md"
+          >
+            閉じる
+          </Button>
+        </HStack>
       </HStack>
 
       {/* Summary */}

@@ -2,10 +2,16 @@
 
 ## 文書管理情報
 - **文書番号**: FRONTEND-PLAN-001
-- **版数**: 1.0
+- **版数**: 1.1
 - **作成日**: 2025年7月13日
-- **最終更新日**: 2025年7月13日
+- **最終更新日**: 2026年4月22日
 - **開発環境**: Docker + React 18 + Vite + Chakra UI v3
+
+### 改版履歴
+| 版数 | 日付 | 変更内容 |
+|---|---|---|
+| 1.0 | 2025-07-13 | 初版 |
+| 1.1 | 2026-04-22 | テーマシステム対応: `UIState` を `themeId` 基準に変更、`ThemeProvider` 設計を §3.1 に追記、`theme/` ディレクトリ構成を更新 |
 
 ---
 
@@ -107,8 +113,15 @@ frontend/src/
 │   ├── recipeStore.ts
 │   ├── menuStore.ts
 │   └── uiStore.ts
-├── theme/              # Chakra UI テーマ
-│   ├── index.ts
+├── theme/              # Chakra UI テーマ（テーマシステム仕様書 参照）
+│   ├── index.ts                # 従来の単一テーマ（standard プリセットへ縮退）
+│   ├── ThemeProvider.tsx       # 動的テーマ適用 Provider
+│   ├── buildSystem.ts          # ThemeDefinition → Chakra system への変換
+│   ├── presets/                # プリセットテーマ定義（DB シードと同期）
+│   │   ├── standard.ts
+│   │   ├── highContrast.ts
+│   │   ├── warm.ts
+│   │   └── calm.ts
 │   ├── foundations/
 │   │   ├── colors.ts
 │   │   ├── fonts.ts
@@ -170,11 +183,15 @@ interface MenuState {
 interface UIState {
   isLoading: boolean
   notifications: Notification[]
-  theme: 'light' | 'dark' | 'high-contrast'
+  themeId: string | null          // 現在の有効テーマID（themes.theme_key）
+  pendingThemeId: string | null   // 切替中（楽観的反映）の一時状態
   fontSize: 'normal' | 'large' | 'x-large'
-  setTheme: (theme: string) => void
+  setThemeId: (id: string) => void
   setFontSize: (size: string) => void
 }
+// NOTE: 旧 `theme: 'light' | 'dark' | 'high-contrast'` は廃止。テーマ定義は
+//       バックエンドの themes テーブルで管理し、ThemeProvider が動的に適用する。
+//       詳細は theme_system_specification.md §8 を参照。
 ```
 
 #### 2.2.2 React Query活用
@@ -198,6 +215,74 @@ const useWeeklyMenu = (weekOffset: number) => useQuery({
 ## 3. 高齢者向けUI/UX実装
 
 ### 3.1 Chakra UI v3 カスタムテーマ
+
+> **NOTE**: v1.1 よりテーマは単一ハードコード方式から「テーマシステム」へ移行した。本節 3.1.1〜3.1.2 は個々の ThemeDefinition（`standard` プリセット）の値例として保持し、実行時の適用は §3.1.0 `ThemeProvider` が担う。
+> 詳細仕様: [`theme_system_specification.md`](./theme_system_specification.md)
+
+#### 3.1.0 ThemeProvider（動的テーマ適用）
+
+`frontend/src/theme/ThemeProvider.tsx` はアプリ全体のルート直下に配置され、以下を担う:
+
+1. **未ログイン時**: `GET /api/v1/themes/public/default` を叩きシステム既定テーマを取得
+2. **ログイン時**:
+   - `useQuery(['preferences','me'])` → ユーザーの `theme_id`
+   - `useQuery(['themes', themeId])` → テーマ定義
+3. **動的 system 構築**: `buildSystem(themeDefinition)` が Chakra v3 の `createSystem(defaultConfig, defineConfig({ ... }))` を返す
+4. **フォールバック**: 定義取得失敗 / バリデーション不合格時は `presets/standard.ts` を使用
+
+```typescript
+// theme/ThemeProvider.tsx
+import { ChakraProvider } from '@chakra-ui/react'
+import { useQuery } from '@tanstack/react-query'
+import { useAuthStore } from '../stores/authStore'
+import { useUIStore } from '../stores/uiStore'
+import { buildSystem } from './buildSystem'
+import standard from './presets/standard'
+
+export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const user = useAuthStore(s => s.user)
+  const setThemeId = useUIStore(s => s.setThemeId)
+
+  const { data: publicDefault } = useQuery({
+    queryKey: ['themes', 'public-default'],
+    queryFn: () => themeService.getPublicDefault(),
+    enabled: !user,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const { data: prefs } = useQuery({
+    queryKey: ['preferences', 'me'],
+    queryFn: () => preferencesService.getMine(),
+    enabled: !!user,
+  })
+
+  const activeThemeId = prefs?.theme_id ?? publicDefault?.theme_key ?? 'standard'
+
+  const { data: themeDef } = useQuery({
+    queryKey: ['themes', activeThemeId],
+    queryFn: () => themeService.get(activeThemeId),
+    enabled: !!activeThemeId,
+  })
+
+  React.useEffect(() => { setThemeId(activeThemeId) }, [activeThemeId, setThemeId])
+
+  const system = React.useMemo(
+    () => buildSystem(themeDef?.definition ?? standard),
+    [themeDef],
+  )
+
+  return <ChakraProvider value={system}>{children}</ChakraProvider>
+}
+```
+
+`buildSystem` は `theme_system_specification.md` §3.1 の JSON スキーマに準拠した ThemeDefinition を受け取り、以下を Chakra `defineConfig` に写像する:
+
+- `theme.tokens.colors.brand.*` ← `definition.colors.brand.*`
+- `theme.tokens.colors.semantic.*` ← `definition.colors.semantic.*`
+- `theme.semanticTokens.colors.*` ← `definition.semanticTokens`
+- `theme.tokens.fonts.body/heading` ← `definition.fonts.*`
+- `theme.tokens.radii.*` ← `definition.radii.*`
+- `theme.globalCss` ← `baseSizePx` 反映、focus-visible outline
 
 #### 3.1.1 基本設定
 ```typescript

@@ -168,3 +168,68 @@ export async function broadcastNotification(payload: {
   const { data } = await client.post<{ message: string; count: number }>('/admin/notifications/broadcast', payload)
   return data
 }
+
+// ---------------------------------------------------------------------------
+// 献立インポート
+// ---------------------------------------------------------------------------
+export type ImportRecipeInput = {
+  name: string
+  category: string
+  type: '主菜' | '副菜' | '汁物' | 'ご飯' | 'その他'
+  difficulty: string
+  cooking_time: number
+  ingredients_text?: string | null
+  instructions?: string | null
+  memo?: string | null
+  recipe_url?: string | null
+}
+
+export type ImportMenuRecipeRef = {
+  recipe_name: string
+  recipe_type: '主菜' | '副菜' | '汁物' | 'ご飯' | 'その他'
+}
+
+export type ImportMenuSlot = {
+  breakfast: ImportMenuRecipeRef[]
+  dinner: ImportMenuRecipeRef[]
+}
+
+export type MenuImportRequest = {
+  target_user_id?: string
+  target_user_email?: string
+  week_start: string  // YYYY-MM-DD
+  recipes: ImportRecipeInput[]
+  menu: Record<string, ImportMenuSlot>
+  generate_shopping_list?: boolean
+  helper_user_id?: string
+  dry_run?: boolean
+}
+
+export type ShoppingListResult = {
+  request_id: string
+  total_items: number
+  excluded_items: number
+  active_items: number
+  replaced_existing: boolean
+}
+
+export type MenuImportResponse = {
+  applied: boolean
+  target_user: {
+    id: string
+    email: string
+    full_name: string
+    role: string
+  }
+  week_start: string
+  created_recipe_count: number
+  reused_recipe_count: number
+  replaced_menu: boolean
+  shopping_list: ShoppingListResult | null
+  warnings: string[]
+}
+
+export async function importMenu(payload: MenuImportRequest): Promise<MenuImportResponse> {
+  const { data } = await client.post<MenuImportResponse>('/admin/menus/import', payload)
+  return data
+}

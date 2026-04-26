@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: helper_user
       POSTGRES_PASSWORD: helper_password
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +20,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6380:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -32,7 +32,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       - ./backend:/app
     environment:
@@ -45,6 +45,14 @@ services:
       - ENVIRONMENT=development
       - DEBUG=true
       - CORS_ORIGINS=http://localhost:3000
+      # Docker-in-WSL 環境では host.docker.internal が Linux ブリッジ(172.17.0.1)に解決され
+      # Windows ホストに届かないため、WSL ゲートウェイ IP を既定値にする。
+      # Docker Desktop や他環境では外部から OLLAMA_BASE_URL を上書きすること。
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://172.29.128.1:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-gemma4:latest}
+      - OLLAMA_TIMEOUT_SECONDS=${OLLAMA_TIMEOUT_SECONDS:-240}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy
@@ -62,7 +70,7 @@ services:
       - ./frontend:/app
       - /app/node_modules
     environment:
-      - VITE_API_URL=http://localhost:8000/api/v1
+      - VITE_API_URL=http://localhost:8001/api/v1
     depends_on:
       - backend
 

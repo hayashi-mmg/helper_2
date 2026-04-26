@@ -27,7 +27,17 @@ from app.schemas.shopping import (
     ShoppingRequestCreate,
     ShoppingRequestResponse,
 )
+from app.services.llm_client import (
+    OllamaInvalidJSONError,
+    OllamaTimeoutError,
+    OllamaUnavailableError,
+)
 from app.services.shopping_list_generator import generate_shopping_list_from_menu
+from app.services.shopping_organizer import (
+    OrganizeValidationError,
+    ShoppingRequestNotFoundError,
+    organize_shopping_request,
+)
 
 router = APIRouter(prefix="/shopping", tags=["買い物管理"])
 
@@ -164,6 +174,71 @@ async def generate_from_menu_endpoint(
         status=request.status,
         notes=request.notes,
         source_menu_week=week_start,
+        items=items_response,
+        summary=GenerateSummary(
+            total_items=total,
+            excluded_items=excluded_count,
+            active_items=total - excluded_count,
+        ),
+        created_at=request.created_at,
+    )
+
+
+@router.post("/requests/{request_id}/organize", response_model=GenerateFromMenuResponse)
+async def organize_shopping_request_endpoint(
+    request_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """買い物リストをAIで整理（類似食材の統合・カテゴリ標準化）。"""
+    try:
+        request = await organize_shopping_request(db, current_user.id, request_id)
+    except ShoppingRequestNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="買い物リクエストが見つかりません",
+        )
+    except OllamaUnavailableError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="整理サービスに接続できません",
+        )
+    except OllamaTimeoutError:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="整理に時間がかかりすぎました。もう一度お試しください",
+        )
+    except (OllamaInvalidJSONError, OrganizeValidationError):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="整理結果の解析に失敗しました。もう一度お試しください",
+        )
+
+    items_response = []
+    excluded_count = 0
+    for item in request.items:
+        excluded_reason = "pantry" if item.is_excluded else None
+        if item.is_excluded:
+            excluded_count += 1
+        items_response.append(GeneratedItemResponse(
+            id=str(item.id),
+            item_name=item.item_name,
+            category=item.category,
+            quantity=item.quantity,
+            memo=item.memo,
+            status=item.status,
+            is_excluded=item.is_excluded,
+            excluded_reason=excluded_reason,
+            recipe_sources=[],
+        ))
+
+    total = len(items_response)
+    return GenerateFromMenuResponse(
+        id=str(request.id),
+        request_date=request.request_date,
+        status=request.status,
+        notes=request.notes,
+        source_menu_week=request.request_date,
         items=items_response,
         summary=GenerateSummary(
             total_items=total,

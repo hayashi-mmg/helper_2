@@ -123,6 +123,33 @@ export interface MealSlotUpdate {
   dinner: MenuRecipeRef[]
 }
 
+// --- AI献立提案 ---
+
+export interface MenuSuggestionRequest {
+  week_start: string
+  dietary_restrictions?: string[]
+  avoid_ingredients?: string[]
+  notes?: string
+}
+
+export interface SuggestedRecipeRef {
+  recipe_id: string
+  name: string
+  recipe_type: string
+  cooking_time: number
+}
+
+export interface SuggestedMealSlot {
+  breakfast: SuggestedRecipeRef[]
+  dinner: SuggestedRecipeRef[]
+}
+
+export interface WeeklyMenuSuggestionResponse {
+  week_start: string
+  menus: Record<string, SuggestedMealSlot>
+  rationale?: string | null
+}
+
 // --- Recipe Ingredients ---
 
 export interface RecipeIngredient {

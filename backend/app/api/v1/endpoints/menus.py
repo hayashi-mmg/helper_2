@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, require_role
 from app.core.database import get_db
 from app.crud.menu import (
     build_menu_response,
@@ -14,6 +14,17 @@ from app.crud.menu import (
 )
 from app.db.models.user import User
 from app.schemas.menu import WeeklyMenuClear, WeeklyMenuCopy, WeeklyMenuUpdate
+from app.schemas.menu_suggestion import MenuSuggestionRequest, WeeklyMenuSuggestionResponse
+from app.services.llm_client import (
+    OllamaInvalidJSONError,
+    OllamaTimeoutError,
+    OllamaUnavailableError,
+)
+from app.services.menu_suggester import (
+    RecipeCatalogEmptyError,
+    SuggestionValidationError,
+    suggest_weekly_menu,
+)
 
 router = APIRouter(prefix="/menus", tags=["献立"])
 
@@ -76,3 +87,44 @@ async def clear_week_menu(
 ):
     week_start = _normalize_week_start(data.week_start)
     await clear_weekly_menu(db, current_user.id, week_start)
+
+
+@router.post("/suggest", response_model=WeeklyMenuSuggestionResponse)
+async def suggest_week_menu(
+    data: MenuSuggestionRequest,
+    current_user: User = Depends(require_role("senior")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ollama による1週間分の献立提案（利用者本人のみ）。
+
+    提案結果は DB 保存せず返却する。利用者が画面で確認後、既存の
+    ``PUT /menus/week`` で適用する。
+    """
+    normalized_request = MenuSuggestionRequest(
+        week_start=_normalize_week_start(data.week_start),
+        dietary_restrictions=data.dietary_restrictions,
+        avoid_ingredients=data.avoid_ingredients,
+        notes=data.notes,
+    )
+    try:
+        return await suggest_weekly_menu(db, current_user.id, normalized_request)
+    except RecipeCatalogEmptyError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="レシピが登録されていません。先にレシピを登録してください",
+        )
+    except OllamaUnavailableError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="献立提案サービスに接続できません",
+        )
+    except OllamaTimeoutError:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="提案に時間がかかりすぎました。もう一度お試しください",
+        )
+    except (OllamaInvalidJSONError, SuggestionValidationError):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="提案の解析に失敗しました。もう一度お試しください",
+        )

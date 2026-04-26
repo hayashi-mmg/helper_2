@@ -6,6 +6,9 @@ import AppLayout from '@/components/layout/AppLayout'
 import LoadingState from '@/components/ui/LoadingState'
 import AdminAssignmentsPage from '@/pages/AdminAssignmentsPage'
 import AdminDashboardPage from '@/pages/AdminDashboardPage'
+import AdminMenuImportPage from '@/pages/AdminMenuImportPage'
+import AdminThemeEditorPage from '@/pages/AdminThemeEditorPage'
+import AdminThemesPage from '@/pages/AdminThemesPage'
 import AdminUsersPage from '@/pages/AdminUsersPage'
 import DashboardPage from '@/pages/DashboardPage'
 import HelpPage from '@/pages/HelpPage'
@@ -84,6 +87,10 @@ export default function App() {
         <Route path="admin" element={<AdminRoute><AdminDashboardPage /></AdminRoute>} />
         <Route path="admin/users" element={<AdminRoute><AdminUsersPage /></AdminRoute>} />
         <Route path="admin/assignments" element={<AdminRoute><AdminAssignmentsPage /></AdminRoute>} />
+        <Route path="admin/menu-import" element={<AdminRoute><AdminMenuImportPage /></AdminRoute>} />
+        <Route path="admin/themes" element={<AdminRoute><AdminThemesPage /></AdminRoute>} />
+        <Route path="admin/themes/new" element={<AdminRoute><AdminThemeEditorPage mode="new" /></AdminRoute>} />
+        <Route path="admin/themes/:themeKey/edit" element={<AdminRoute><AdminThemeEditorPage mode="edit" /></AdminRoute>} />
       </Route>
     </Routes>
   )

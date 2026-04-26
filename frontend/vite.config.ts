@@ -12,6 +12,11 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 3000,
+    // WSL2 + Docker bind mount では inotify が動かないため polling を有効化
+    watch: {
+      usePolling: true,
+      interval: 500,
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:8000',

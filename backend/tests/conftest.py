@@ -33,8 +33,10 @@ from app.db.models import (
     SystemSetting,
     Task,
     TaskCompletion,
+    Theme,
     User,
     UserAssignment,
+    UserPreference,
     WeeklyMenu,
     WeeklyMenuRecipe,
 )
@@ -69,11 +71,12 @@ async def clean_tables():
     cleanup_engine = create_async_engine(TEST_DATABASE_URL, echo=False, poolclass=NullPool)
     async with cleanup_engine.begin() as conn:
         await conn.exec_driver_sql(
-            "TRUNCATE TABLE frontend_error_logs, compliance_logs, data_access_logs, "
-            "notifications, system_settings, user_assignments, audit_logs, "
-            "weekly_menu_recipes, weekly_menus, task_completions, tasks, "
-            "shopping_items, shopping_requests, messages, qr_tokens, "
-            "recipe_ingredients, pantry_items, recipes, users CASCADE"
+            "TRUNCATE TABLE user_preferences, themes, frontend_error_logs, "
+            "compliance_logs, data_access_logs, notifications, system_settings, "
+            "user_assignments, audit_logs, weekly_menu_recipes, weekly_menus, "
+            "task_completions, tasks, shopping_items, shopping_requests, "
+            "messages, qr_tokens, recipe_ingredients, pantry_items, recipes, "
+            "users CASCADE"
         )
     await cleanup_engine.dispose()
     yield
@@ -524,3 +527,42 @@ async def sample_notification(db: AsyncSession, senior_user: User) -> Notificati
     await db.commit()
     await db.refresh(notif)
     return notif
+
+
+# ---------------------------------------------------------------------------
+# テーマフィクスチャ
+# ---------------------------------------------------------------------------
+@pytest_asyncio.fixture
+async def seeded_themes(db: AsyncSession) -> list[Theme]:
+    """4 プリセットテーマ + default_theme_id 設定を投入する。
+
+    マイグレーションではなく Base.metadata.create_all でテーブル作成しているため、
+    テストではこのフィクスチャでシードする。
+    """
+    from app.services.theme_presets import BUILTIN_PRESETS
+
+    themes: list[Theme] = []
+    for key, name, description, definition in BUILTIN_PRESETS:
+        theme = Theme(
+            theme_key=key,
+            name=name,
+            description=description,
+            definition=definition,
+            is_builtin=True,
+            is_active=True,
+        )
+        db.add(theme)
+        themes.append(theme)
+
+    setting = SystemSetting(
+        setting_key="default_theme_id",
+        setting_value={"value": "standard"},
+        category="general",
+        description="既定テーマ",
+    )
+    db.add(setting)
+
+    await db.commit()
+    for t in themes:
+        await db.refresh(t)
+    return themes

@@ -37,6 +37,17 @@ export async function generateFromMenu(params: {
   return data
 }
 
+export async function organizeShoppingList(
+  requestId: string,
+): Promise<GenerateFromMenuResponse> {
+  const { data } = await client.post<GenerateFromMenuResponse>(
+    `/shopping/requests/${requestId}/organize`,
+    {},
+    { timeout: 260_000 },
+  )
+  return data
+}
+
 export async function toggleExclude(
   itemId: string,
   isExcluded: boolean,

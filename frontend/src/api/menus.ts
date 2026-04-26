@@ -1,5 +1,10 @@
 import client from './client'
-import type { WeeklyMenuResponse, MealSlotUpdate } from '@/types'
+import type {
+  WeeklyMenuResponse,
+  MealSlotUpdate,
+  MenuSuggestionRequest,
+  WeeklyMenuSuggestionResponse,
+} from '@/types'
 
 export async function getWeeklyMenu(date?: string): Promise<WeeklyMenuResponse> {
   const { data } = await client.get<WeeklyMenuResponse>('/menus/week', {
@@ -32,4 +37,15 @@ export async function copyWeeklyMenu(
 
 export async function clearWeeklyMenu(weekStart: string): Promise<void> {
   await client.post('/menus/week/clear', { week_start: weekStart })
+}
+
+export async function suggestMenu(
+  req: MenuSuggestionRequest,
+): Promise<WeeklyMenuSuggestionResponse> {
+  const { data } = await client.post<WeeklyMenuSuggestionResponse>(
+    '/menus/suggest',
+    req,
+    { timeout: 260_000 },
+  )
+  return data
 }

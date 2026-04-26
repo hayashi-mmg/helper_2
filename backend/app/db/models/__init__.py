@@ -14,6 +14,8 @@ from app.db.models.notification import Notification
 from app.db.models.data_access_log import DataAccessLog
 from app.db.models.compliance_log import ComplianceLog
 from app.db.models.frontend_error_log import FrontendErrorLog
+from app.db.models.theme import Theme
+from app.db.models.user_preference import UserPreference
 
 __all__ = [
     "User",
@@ -35,4 +37,6 @@ __all__ = [
     "DataAccessLog",
     "ComplianceLog",
     "FrontendErrorLog",
+    "Theme",
+    "UserPreference",
 ]

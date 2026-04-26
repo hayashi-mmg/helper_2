@@ -2,10 +2,16 @@
 
 ## 文書管理情報
 - **文書番号**: API-SPEC-001
-- **版数**: 1.0
+- **版数**: 1.1
 - **作成日**: 2025年7月13日
-- **最終更新日**: 2025年7月13日
+- **最終更新日**: 2026年4月22日
 - **設計者**: Claude Code + Gemini技術検証
+
+### 改版履歴
+| 版数 | 日付 | 変更内容 |
+|---|---|---|
+| 1.0 | 2025-07-13 | 初版 |
+| 1.1 | 2026-04-22 | §16 テーマシステムAPI を追加（公開既定取得・一覧・詳細・ユーザー設定・管理者CRUD・既定変更） |
 
 ---
 
@@ -1417,6 +1423,175 @@ Authorization: Bearer <access_token>
 
 ---
 
+## 16. テーマシステムAPI
+
+ページデザイン（配色・書体・余白・角丸）をユーザー・システム単位で切替するためのAPI群。詳細仕様は [テーマシステム仕様書](./theme_system_specification.md) を参照。
+
+### 16.1 既定テーマ取得（未認証可）
+未ログイン画面（ログイン画面等）に適用するシステム既定テーマを取得する。
+
+```http
+GET /api/v1/themes/public/default
+```
+
+**成功レスポンス (200 OK)**:
+```json
+{
+  "theme_key": "standard",
+  "name": "スタンダード",
+  "definition": {
+    "schema_version": "1.0",
+    "id": "standard",
+    "name": "スタンダード",
+    "colors": { "brand": { "500": "#1976d2" }, "semantic": { "success": "#2e7d32", "danger": "#d32f2f", "warn": "#ed6c02", "info": "#0288d1" }, "neutral": {} },
+    "semanticTokens": { "bg.page": "{colors.neutral.50}", "text.primary": "{colors.neutral.900}" },
+    "fonts": { "body": "Noto Sans JP, sans-serif", "heading": "Noto Sans JP, sans-serif", "baseSizePx": 18 },
+    "radii": { "md": "0.5rem" },
+    "density": "comfortable"
+  }
+}
+```
+
+**レート制限**: 未認証エンドポイントのため通常の未認証レート制限（100 req/h）を適用。CDN 層でのキャッシュ可。
+
+### 16.2 テーマ一覧取得
+```http
+GET /api/v1/themes
+Authorization: Bearer <access_token>
+```
+
+**クエリパラメータ**:
+| 名称 | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `is_builtin` | boolean | No | `true` で組込みのみ / `false` でカスタムのみ |
+| `is_active` | boolean | No | 既定 `true`（選択可能なテーマのみ） |
+
+**成功レスポンス (200 OK)**:
+```json
+{
+  "themes": [
+    { "theme_key": "standard", "name": "スタンダード", "description": "...", "is_builtin": true, "is_active": true, "preview_image_url": null },
+    { "theme_key": "high-contrast", "name": "ハイコントラスト", "description": "...", "is_builtin": true, "is_active": true, "preview_image_url": null },
+    { "theme_key": "warm", "name": "温もり", "description": "...", "is_builtin": true, "is_active": true, "preview_image_url": null },
+    { "theme_key": "calm", "name": "おだやか", "description": "...", "is_builtin": true, "is_active": true, "preview_image_url": null }
+  ]
+}
+```
+
+### 16.3 テーマ詳細取得
+```http
+GET /api/v1/themes/{theme_key}
+Authorization: Bearer <access_token>
+```
+
+**成功レスポンス (200 OK)**: 完全なテーマ定義 JSON を含むオブジェクト（§16.1 と同形式）。
+
+**エラーレスポンス**:
+- `404 Not Found` — 存在しないか `is_active=false`
+- `410 Gone` — 削除済みのカスタムテーマ
+
+### 16.4 自分の設定取得
+```http
+GET /api/v1/users/me/preferences
+Authorization: Bearer <access_token>
+```
+
+**成功レスポンス (200 OK)**:
+```json
+{
+  "theme_id": "warm",
+  "font_size_override": null
+}
+```
+
+**設計ポイント**:
+- 未設定のキーは `null` で返却
+- 将来の設定項目追加時もレスポンス形状は後方互換を維持
+
+### 16.5 自分の設定更新
+```http
+PUT /api/v1/users/me/preferences
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "theme_id": "high-contrast"
+}
+```
+
+**成功レスポンス (200 OK)**: 更新後の設定オブジェクト（§16.4 と同形式）。
+
+**バリデーション**:
+- `theme_id` は存在する `themes.theme_key` かつ `is_active=true` であること
+- 不合格時 `422 Unprocessable Entity`
+
+### 16.6 管理者: カスタムテーマ作成
+```http
+POST /api/v1/admin/themes
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "theme_key": "office-brand",
+  "name": "事業所A ブランド",
+  "description": "事業所A のコーポレートカラー",
+  "definition": { /* ThemeDefinition JSON（theme_system_specification.md §3.1） */ },
+  "is_active": true
+}
+```
+
+**成功レスポンス (201 Created)**: 作成したテーマ。
+
+**バリデーション**（サーバ側、違反時 `422`）:
+- JSON スキーマ適合（`theme_system_specification.md` §3.1）
+- `fonts.baseSizePx >= 18`
+- 本文コントラスト比 `>= 4.5:1`（text.primary vs bg.page）
+- ブランド上テキストコントラスト比 `>= 4.5:1`（text.onBrand vs colors.brand.500）
+- `theme_key` 一意性（重複時 `409 Conflict`）
+
+### 16.7 管理者: カスタムテーマ更新
+```http
+PUT /api/v1/admin/themes/{theme_key}
+Authorization: Bearer <access_token>
+Content-Type: application/json
+```
+
+**組込みテーマの制限**:
+- `is_builtin=true` のテーマは `name` / `description` / `is_active` のみ更新可能
+- `definition` / `theme_key` の更新は `409 Conflict`
+
+**監査**: 変更前後の値が `audit_logs` に記録される。
+
+### 16.8 管理者: カスタムテーマ削除
+```http
+DELETE /api/v1/admin/themes/{theme_key}
+Authorization: Bearer <access_token>
+```
+
+**制約**:
+- 組込みテーマの削除は不可（`409 Conflict`）
+- 現在の `default_theme_id` に指定されているテーマは削除不可（`409 Conflict`）
+- 削除するとそのテーマを選択中のユーザーには、次回取得時にシステム既定テーマへフォールバック
+
+**成功レスポンス (204 No Content)**
+
+### 16.9 管理者: システム既定テーマ設定
+既存の §14 系管理者設定 API を再利用する。
+
+```http
+PUT /api/v1/admin/settings/default_theme_id
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "value": "warm"
+}
+```
+
+**バリデーション**: 値が有効な `themes.theme_key` かつ `is_active=true` であること。
+
+---
+
 ## 付録: 実装優先順位
 
 ### Phase 1: 基本認証・ユーザー管理
@@ -1448,6 +1623,11 @@ Authorization: Bearer <access_token>
 16. データアクセスログAPI + フロントエンドテレメトリAPI
 17. コンプライアンスAPI（同意ログ・権利行使・漏えい報告）
 18. ログ検索API（Lokiプロキシ）
+
+### Phase 7: テーマシステム
+19. 公開既定テーマAPI + テーマ一覧・詳細API
+20. ユーザー設定API（/users/me/preferences）
+21. 管理者テーマCRUD API + 既定テーマ設定API
 
 ---
 

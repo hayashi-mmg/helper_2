@@ -2,10 +2,16 @@
 
 ## 文書管理情報
 - **文書番号**: ADMIN-SPEC-001
-- **版数**: 1.0
+- **版数**: 1.1
 - **作成日**: 2026年4月4日
-- **最終更新日**: 2026年4月4日
+- **最終更新日**: 2026年4月22日
 - **設計者**: Claude Code
+
+### 改版履歴
+| 版数 | 日付 | 変更内容 |
+|---|---|---|
+| 1.0 | 2026-04-04 | 初版 |
+| 1.1 | 2026-04-22 | §12 テーマ管理 を追加、実装優先順位に Phase 5: テーマ管理 を追加 |
 
 ---
 
@@ -1038,7 +1044,57 @@ Content-Type: application/json
 
 ---
 
-## 12. 実装優先順位
+## 12. テーマ管理
+
+詳細仕様は [テーマシステム仕様書](./theme_system_specification.md) を参照。本節は管理画面としての要件を定義する。
+
+### 12.1 機能スコープ
+system_admin のみ利用可能。以下の操作を提供する。
+
+- プリセット/カスタム含む全テーマの一覧表示
+- カスタムテーマの新規登録・編集・削除
+- 組込みテーマの有効/無効切替（削除・定義編集は不可、名称・説明のみ変更可）
+- システム既定テーマの指定（未ログイン画面およびユーザー未設定時に適用）
+- プレビュー表示（定義 JSON から簡易プレビューを描画）
+
+### 12.2 画面構成
+| 画面 | パス | 主な要素 |
+|---|---|---|
+| テーマ一覧 | `/admin/themes` | フィルタ（組込み/カスタム、有効/無効）、一覧カード、「新規登録」ボタン、「既定テーマ」表示 |
+| テーマ登録 | `/admin/themes/new` | JSON エディタ、必須フィールドフォーム、リアルタイムプレビュー、保存時のバリデーションエラー表示 |
+| テーマ編集 | `/admin/themes/{theme_key}/edit` | 登録画面と同構成（組込みは編集可能フィールドを制限） |
+| 既定テーマ設定 | テーマ一覧内のモーダル | `default_theme_id` の変更フォーム |
+
+### 12.3 バリデーション要件
+以下は**サーバ側で実施**し、クライアント側はサーバレスポンスを受けてエラー表示する。
+
+- JSON スキーマ適合（`theme_system_specification.md` §3.1）
+- 本文フォントサイズ ≥ 18px
+- コントラスト比（WCAG 2.1 AA）: 本文 ≥ 4.5:1、ブランド上テキスト ≥ 4.5:1、非テキスト UI 要素 ≥ 3:1
+- `theme_key` 一意性
+- サイズ上限 16KB
+
+### 12.4 監査
+テーマの登録・編集・削除、および既定テーマ変更は `audit_logs` に以下の形で記録する。
+
+| action | resource_type | resource_id | メタ |
+|---|---|---|---|
+| `theme.create` | `theme` | `theme_key` | 定義 JSON（必要に応じサニタイズ） |
+| `theme.update` | `theme` | `theme_key` | 変更前後の差分 |
+| `theme.delete` | `theme` | `theme_key` | 削除時のスナップショット |
+| `system.update_default_theme` | `system_setting` | `default_theme_id` | 変更前後の値 |
+
+### 12.5 エラーレスポンス
+- `422 Unprocessable Entity` — バリデーション不合格（詳細は §11.1 形式で返す）
+- `409 Conflict` — 組込みテーマの削除、`theme_key` 重複、既定テーマに指定中の削除
+- `404 Not Found` — 存在しない `theme_key`
+
+### 12.6 関連エンドポイント
+[`api_specification.md`](./api_specification.md) §16 参照。
+
+---
+
+## 13. 実装優先順位
 
 ### Phase 1: 基盤（最優先）
 1. DBマイグレーション: users.role CHECK制約に `system_admin` 追加、`audit_logs` テーブル作成
@@ -1065,3 +1121,12 @@ Content-Type: application/json
 2. システム設定CRUD API
 3. 通知API
 4. ケアマネージャーダッシュボード
+
+### Phase 5: テーマ管理
+1. DBマイグレーション: `themes`、`user_preferences` テーブル作成
+2. プリセットテーマのシード投入（`standard` / `high-contrast` / `warm` / `calm`）
+3. 公開既定テーマAPI、テーマ一覧/詳細API
+4. ユーザー設定API（`/users/me/preferences`）
+5. 管理者テーマCRUD API、既定テーマ変更API
+6. フロントエンド `ThemeProvider` 導入、ProfilePage のテーマ選択UI
+7. Admin テーマ管理画面（§12）

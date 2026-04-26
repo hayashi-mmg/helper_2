@@ -8,6 +8,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import FormField from '@/components/ui/FormField'
 import LoadingState from '@/components/ui/LoadingState'
 import { toaster } from '@/components/ui/toaster'
+import ThemeSelector from '@/components/theme/ThemeSelector'
 
 const ROLE_LABELS: Record<string, string> = {
   senior: '利用者',
@@ -323,6 +324,33 @@ export default function ProfilePage() {
             </VStack>
           </Box>
         )}
+      </Box>
+
+      {/* テーマ選択セクション */}
+      <Box mt={8} maxW="640px">
+        <Box
+          bg="bg.card"
+          borderRadius="xl"
+          border="1px solid"
+          borderColor="border.default"
+          px={8}
+          py={6}
+        >
+          <Text
+            id="theme-heading"
+            as="h2"
+            fontSize="xl"
+            fontWeight="bold"
+            color="text.primary"
+            mb={4}
+          >
+            表示テーマ
+          </Text>
+          <Text fontSize="sm" color="text.secondary" mb={4}>
+            画面の配色・書体を選択できます。変更は即座に全画面へ反映されます。
+          </Text>
+          <ThemeSelector />
+        </Box>
       </Box>
     </Box>
   )

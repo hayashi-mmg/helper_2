@@ -16,6 +16,13 @@ export const TEST_SENIOR = {
   role: 'senior',
 }
 
+export const TEST_ADMIN = {
+  email: 'e2e-admin@test.com',
+  password: 'e2epassword123',
+  full_name: 'E2E管理者',
+  role: 'system_admin',
+}
+
 /**
  * APIを直接呼んでユーザーを登録する（既に存在する場合はログインする）
  * request context を使い、page.request の接続問題を回避
@@ -63,11 +70,17 @@ async function loginViaUI(page: Page, email: string, password: string) {
 // カスタムフィクスチャ付きテスト
 export const test = base.extend<{
   loggedInPage: Page
+  adminPage: Page
   seniorUserId: string
 }>({
   loggedInPage: async ({ page, request }, use) => {
     await ensureUser(request, TEST_USER)
     await loginViaUI(page, TEST_USER.email, TEST_USER.password)
+    await use(page)
+  },
+  adminPage: async ({ page, request }, use) => {
+    await ensureUser(request, TEST_ADMIN)
+    await loginViaUI(page, TEST_ADMIN.email, TEST_ADMIN.password)
     await use(page)
   },
   seniorUserId: async ({ request }, use) => {
