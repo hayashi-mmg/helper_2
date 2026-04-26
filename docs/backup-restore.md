@@ -27,8 +27,9 @@
 ### バックアップ保存先
 
 - **プライマリ**: サーバーローカル (`/backups`)
-- **セカンダリ**: AWS S3 (推奨)
-- **オフサイト**: 別リージョンのS3バケット (本番環境推奨)
+- **セカンダリ (推奨)**: **Cloudflare R2** (S3互換、10GB無料、egress無料) — 後述「[Cloudflare R2セットアップ](#cloudflare-r2セットアップ-無償オフサイト)」参照
+- **オフサイト**: 別アカウント / 別リージョンのS3互換バケット (本番環境推奨)
+- **代替**: AWS S3 / Backblaze B2 / Storj DCS (いずれも `BACKUP_S3_ENDPOINT_URL` 設定で対応)
 
 ### RPO/RTO目標
 
@@ -61,9 +62,13 @@ crontab -e
 
 # 毎月1日午前4時にWarm→Coldアーカイブ移行
 0 4 1 * * /opt/helper-system/scripts/archive-logs.sh >> /var/log/helper-archive.log 2>&1
+
+# 毎月1日午前3時にバックアップ網羅性チェック (新テーブル組込み検証)
+0 3 1 * * /opt/helper-system/scripts/verify-backup-tables.sh >> /var/log/helper-backup-verify.log 2>&1
 ```
 
 > **変更履歴**: ログバックアップを週次から**日次**に変更。RPO 24時間目標との整合性を確保するため。
+> 月次の `verify-backup-tables.sh` は、新機能で追加されたテーブル (例: `themes`, `user_preferences`) や法令対応テーブル (`data_access_logs` 等) が pg_dump 結果に確実に含まれることを担保する。
 
 ### バックアップスクリプトの確認
 
@@ -620,6 +625,81 @@ docker compose -f docker-compose.prod.yml exec backend alembic upgrade head
 - [ ] テスト環境でリストア検証
 - [ ] バックアップ容量の見直し
 - [ ] バックアップ手順の見直し
+- [ ] `verify-backup-tables.sh` の実行ログを確認 (新テーブル組込み検証)
+
+### 四半期
+- [ ] **リストア演習を実施** (`docs/operations/backup-restore-drill.md` のチェックリスト)
+- [ ] RTO 4時間目標の達成状況を `restore-drill-log.md` に記録
+- [ ] R2 / S3 ライフサイクルポリシーが期待通りに古いオブジェクトを削除しているか確認
+
+---
+
+## Cloudflare R2セットアップ (無償オフサイト)
+
+AWS S3 を契約しない場合、**Cloudflare R2** を S3互換オフサイトストレージとして利用できる (10GB / 月100万 Class A操作 まで無償、egress も無料)。
+
+### 1. R2 バケット作成
+
+1. Cloudflare ダッシュボード → R2 → 「バケットを作成」
+2. バケット名: `helper-backups-prod` (任意)
+3. ロケーション: `Asia-Pacific (APAC)` 推奨
+
+### 2. APIトークン発行
+
+1. R2 → 「Manage R2 API Tokens」 → 「Create API token」
+2. 権限: **Object Read & Write**
+3. バケット範囲: `helper-backups-prod` のみ
+4. 発行された **Access Key ID** / **Secret Access Key** / **Account ID** を控える
+
+### 3. VPS側の AWS CLI プロファイル登録
+
+```bash
+sudo apt install -y awscli
+aws configure --profile r2
+# AWS Access Key ID:     <発行されたAccess Key>
+# AWS Secret Access Key: <発行されたSecret>
+# Default region name:   auto
+# Default output format: json
+```
+
+### 4. `.env.production` への設定追記
+
+```env
+AWS_S3_BUCKET=helper-backups-prod
+BACKUP_S3_ENDPOINT_URL=https://<account_id>.r2.cloudflarestorage.com
+AWS_PROFILE=r2
+```
+
+### 5. 動作確認
+
+```bash
+# 手動でバックアップ実行 → R2 にアップロードされることを確認
+sudo /opt/helper-system/scripts/backup.sh
+
+aws s3 ls s3://helper-backups-prod/backups/db/ \
+  --profile r2 \
+  --endpoint-url=https://<account_id>.r2.cloudflarestorage.com
+```
+
+### 6. ライフサイクルルール (R2 ダッシュボード)
+
+| プレフィックス | アクション | 経過日数 |
+|----------------|-----------|---------|
+| `backups/db/` | 削除 | 30日 |
+| `backups/redis/` | 削除 | 7日 |
+| `backups/uploads/` | 削除 | 30日 |
+| `backups/logs/operational/` | 削除 | 90日 |
+| `backups/logs/audit/` | 削除 | 180日 |
+| `backups/logs/data-access/` | 削除 | 1095日 (3年) |
+| `backups/logs/compliance/` | 削除 | 1095日 (3年) |
+
+> 法令対応テーブル (data_access_logs / compliance_logs) は3年保持。短縮しないこと。
+
+### Backblaze B2 / Storj DCS への切替え
+
+`BACKUP_S3_ENDPOINT_URL` をそれぞれのエンドポイントに書き換えるだけで切替え可能。
+- Backblaze B2: `https://s3.<region>.backblazeb2.com`
+- Storj DCS: `https://gateway.storjshare.io`
 
 ---
 
@@ -627,4 +707,5 @@ docker compose -f docker-compose.prod.yml exec backend alembic upgrade head
 
 - [デプロイ手順書](./deployment.md)
 - [ロールバック手順書](./rollback.md)
+- [リストア演習ランブック](./operations/backup-restore-drill.md)
 - [トラブルシューティングガイド](./troubleshooting.md)

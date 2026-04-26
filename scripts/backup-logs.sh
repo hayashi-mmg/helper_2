@@ -21,11 +21,23 @@ LAST_BACKUP_MARKER="/backups/.last-log-backup"
 DATE=$(date +%Y%m%d)
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 S3_BUCKET="${AWS_S3_BUCKET:-}"
+S3_ENDPOINT_URL="${BACKUP_S3_ENDPOINT_URL:-}"
+S3_PROFILE="${AWS_PROFILE:-}"
 
 # .env.production から DB接続情報を読み込む
 if [ -f "$PROJECT_DIR/.env.production" ]; then
     POSTGRES_USER=$(grep '^POSTGRES_USER=' "$PROJECT_DIR/.env.production" | cut -d= -f2)
     POSTGRES_DB=$(grep '^POSTGRES_DB=' "$PROJECT_DIR/.env.production" | cut -d= -f2)
+
+    if [ -z "$S3_BUCKET" ]; then
+        S3_BUCKET=$(grep '^AWS_S3_BUCKET=' "$PROJECT_DIR/.env.production" | cut -d= -f2 || true)
+    fi
+    if [ -z "$S3_ENDPOINT_URL" ]; then
+        S3_ENDPOINT_URL=$(grep '^BACKUP_S3_ENDPOINT_URL=' "$PROJECT_DIR/.env.production" | cut -d= -f2 || true)
+    fi
+    if [ -z "$S3_PROFILE" ]; then
+        S3_PROFILE=$(grep '^AWS_PROFILE=' "$PROJECT_DIR/.env.production" | cut -d= -f2 || true)
+    fi
 else
     echo "[$TIMESTAMP] ERROR: .env.production ファイルが見つかりません: $PROJECT_DIR/.env.production" >&2
     exit 1
@@ -50,6 +62,9 @@ cleanup() {
         err "ログバックアップが失敗しました (exit code: $exit_code)"
         if [ -x "$SCRIPT_DIR/backup-notify.sh" ]; then
             "$SCRIPT_DIR/backup-notify.sh" failure "日次ログバックアップ" "exit code: $exit_code"
+        fi
+        if [ -x "$SCRIPT_DIR/backup-metrics.sh" ]; then
+            "$SCRIPT_DIR/backup-metrics.sh" logs failure "$exit_code" || true
         fi
     fi
 }
@@ -133,16 +148,26 @@ main() {
     # タイムスタンプマーカー更新
     touch "$LAST_BACKUP_MARKER"
 
-    # S3アップロード
+    # オフサイトアップロード (AWS S3 / Cloudflare R2 / Backblaze B2 等)
     if command -v aws &> /dev/null && [ -n "$S3_BUCKET" ]; then
-        info "S3にアップロード中..."
-        aws s3 sync "$BACKUP_DIR/operational/" "s3://${S3_BUCKET}/backups/logs/operational/" --quiet
-        aws s3 sync "$BACKUP_DIR/audit/" "s3://${S3_BUCKET}/backups/logs/audit/" --quiet
-        aws s3 sync "$BACKUP_DIR/data-access/" "s3://${S3_BUCKET}/backups/logs/data-access/" --quiet
-        aws s3 sync "$BACKUP_DIR/compliance/" "s3://${S3_BUCKET}/backups/logs/compliance/" --quiet
-        ok "S3アップロード完了"
+        local extra_args=()
+        local target_label="S3"
+        if [ -n "$S3_ENDPOINT_URL" ]; then
+            extra_args+=(--endpoint-url "$S3_ENDPOINT_URL")
+            target_label="S3互換ストレージ"
+        fi
+        if [ -n "$S3_PROFILE" ]; then
+            extra_args+=(--profile "$S3_PROFILE")
+        fi
+
+        info "${target_label} にアップロード中..."
+        aws s3 sync "$BACKUP_DIR/operational/"  "s3://${S3_BUCKET}/backups/logs/operational/"  --quiet "${extra_args[@]}"
+        aws s3 sync "$BACKUP_DIR/audit/"        "s3://${S3_BUCKET}/backups/logs/audit/"        --quiet "${extra_args[@]}"
+        aws s3 sync "$BACKUP_DIR/data-access/"  "s3://${S3_BUCKET}/backups/logs/data-access/"  --quiet "${extra_args[@]}"
+        aws s3 sync "$BACKUP_DIR/compliance/"   "s3://${S3_BUCKET}/backups/logs/compliance/"   --quiet "${extra_args[@]}"
+        ok "オフサイトアップロード完了"
     else
-        info "AWS CLI未設定またはS3バケット未指定（S3アップロードをスキップ）"
+        info "AWS CLI未設定またはバケット未指定（オフサイトアップロードをスキップ）"
     fi
 
     # ローカルの古いバックアップ削除（90日超過の運用ログ）
@@ -165,6 +190,11 @@ main() {
     # 成功通知
     if [ -x "$SCRIPT_DIR/backup-notify.sh" ]; then
         "$SCRIPT_DIR/backup-notify.sh" success "日次ログバックアップ" "サイズ: ${today_size:-0}"
+    fi
+
+    # メトリクス出力 (Prometheus textfile collector)
+    if [ -x "$SCRIPT_DIR/backup-metrics.sh" ]; then
+        "$SCRIPT_DIR/backup-metrics.sh" logs success 0 || true
     fi
 }
 

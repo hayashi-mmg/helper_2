@@ -25,12 +25,25 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 DATE=$(date +%Y%m%d)
 LOG_TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 S3_BUCKET="${AWS_S3_BUCKET:-}"
+S3_ENDPOINT_URL="${BACKUP_S3_ENDPOINT_URL:-}"
+S3_PROFILE="${AWS_PROFILE:-}"
 
 # DB設定読み込み
 if [ -f "$PROJECT_DIR/.env.production" ]; then
     POSTGRES_USER=$(grep '^POSTGRES_USER=' "$PROJECT_DIR/.env.production" | cut -d= -f2)
     POSTGRES_DB=$(grep '^POSTGRES_DB=' "$PROJECT_DIR/.env.production" | cut -d= -f2)
     REDIS_PASSWORD=$(grep '^REDIS_PASSWORD=' "$PROJECT_DIR/.env.production" | cut -d= -f2 || true)
+
+    # オフサイトストレージ設定 (.env.productionに記載があれば優先)
+    if [ -z "$S3_BUCKET" ]; then
+        S3_BUCKET=$(grep '^AWS_S3_BUCKET=' "$PROJECT_DIR/.env.production" | cut -d= -f2 || true)
+    fi
+    if [ -z "$S3_ENDPOINT_URL" ]; then
+        S3_ENDPOINT_URL=$(grep '^BACKUP_S3_ENDPOINT_URL=' "$PROJECT_DIR/.env.production" | cut -d= -f2 || true)
+    fi
+    if [ -z "$S3_PROFILE" ]; then
+        S3_PROFILE=$(grep '^AWS_PROFILE=' "$PROJECT_DIR/.env.production" | cut -d= -f2 || true)
+    fi
 else
     echo "[$LOG_TIMESTAMP] ERROR: .env.production ファイルが見つかりません: $PROJECT_DIR/.env.production" >&2
     exit 1
@@ -56,6 +69,9 @@ cleanup() {
         err "バックアップが失敗しました (exit code: $exit_code)"
         if [ -x "$SCRIPT_DIR/backup-notify.sh" ]; then
             "$SCRIPT_DIR/backup-notify.sh" failure "日次DBバックアップ" "exit code: $exit_code"
+        fi
+        if [ -x "$SCRIPT_DIR/backup-metrics.sh" ]; then
+            "$SCRIPT_DIR/backup-metrics.sh" db failure "$exit_code" || true
         fi
     fi
 }
@@ -228,19 +244,32 @@ cleanup_old_backups() {
 }
 
 # --- S3アップロード ---
+# AWS S3 / Cloudflare R2 / Backblaze B2 等のS3互換ストレージに対応。
+# BACKUP_S3_ENDPOINT_URL 設定時は --endpoint-url を付与してS3互換APIへ送信する。
 upload_to_s3() {
     if ! command -v aws &> /dev/null || [ -z "$S3_BUCKET" ]; then
-        info "AWS CLI未設定またはS3バケット未指定（S3アップロードをスキップ）"
+        info "AWS CLI未設定またはバケット未指定（オフサイトアップロードをスキップ）"
         return 0
     fi
 
-    info "S3にアップロード中..."
+    local target_label="S3"
+    local extra_args=()
+    if [ -n "$S3_ENDPOINT_URL" ]; then
+        extra_args+=(--endpoint-url "$S3_ENDPOINT_URL")
+        target_label="S3互換ストレージ ($S3_ENDPOINT_URL)"
+    fi
+    if [ -n "$S3_PROFILE" ]; then
+        extra_args+=(--profile "$S3_PROFILE")
+    fi
 
-    aws s3 sync "$BACKUP_DIR/db/" "s3://${S3_BUCKET}/backups/db/" --quiet
-    aws s3 sync "$BACKUP_DIR/redis/" "s3://${S3_BUCKET}/backups/redis/" --quiet
-    aws s3 sync "$BACKUP_DIR/uploads/" "s3://${S3_BUCKET}/backups/uploads/" --quiet
+    info "${target_label} にアップロード中..."
 
-    ok "S3アップロード完了"
+    aws s3 sync "$BACKUP_DIR/db/"      "s3://${S3_BUCKET}/backups/db/"      --quiet "${extra_args[@]}"
+    aws s3 sync "$BACKUP_DIR/redis/"   "s3://${S3_BUCKET}/backups/redis/"   --quiet "${extra_args[@]}"
+    aws s3 sync "$BACKUP_DIR/uploads/" "s3://${S3_BUCKET}/backups/uploads/" --quiet "${extra_args[@]}"
+    aws s3 sync "$BACKUP_DIR/config/"  "s3://${S3_BUCKET}/backups/config/"  --quiet "${extra_args[@]}"
+
+    ok "オフサイトアップロード完了"
 }
 
 # --- バックアップ完全性テスト ---
@@ -343,6 +372,11 @@ main() {
     # 成功通知
     if [ -x "$SCRIPT_DIR/backup-notify.sh" ]; then
         "$SCRIPT_DIR/backup-notify.sh" success "日次DBバックアップ" "DB: ${today_db_size}, 合計: ${total_size}"
+    fi
+
+    # メトリクス出力 (Prometheus textfile collector)
+    if [ -x "$SCRIPT_DIR/backup-metrics.sh" ]; then
+        "$SCRIPT_DIR/backup-metrics.sh" db success 0 || true
     fi
 }
 
