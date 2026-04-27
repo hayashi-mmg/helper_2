@@ -23,8 +23,52 @@ logger = logging.getLogger(__name__)
 
 STANDARD_CATEGORIES = ("野菜", "肉類", "魚介類", "卵・乳製品", "穀類", "調味料", "その他")
 
-# 複合名（「塩、パセリ、マヨネーズ」「オリーブオイル、レモン汁」等）を分割するセパレータ
-_COMPOUND_SPLIT = re.compile(r"[、]|または")
+# 複合名（「塩、パセリ、マヨネーズ」「刻みネギ・ごま」等）を分割するセパレータ
+_COMPOUND_SPLIT = re.compile(r"[、・]|または")
+
+
+def _split_compound(name: str) -> list[str]:
+    """複合名を分割。ただし括弧内のセパレータでは分割しない。
+
+    例: 'サーモン（刺身用またはスモークサーモン）' → ['サーモン（刺身用またはスモークサーモン）']
+    例: '塩、パセリ' → ['塩', 'パセリ']
+    例: '刻みネギ・ごま' → ['刻みネギ', 'ごま']
+    """
+    parts: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    i = 0
+    while i < len(name):
+        ch = name[i]
+        if ch in "（(":
+            depth += 1
+            buf.append(ch)
+            i += 1
+            continue
+        if ch in "）)":
+            depth = max(0, depth - 1)
+            buf.append(ch)
+            i += 1
+            continue
+        if depth == 0:
+            # セパレータ判定（「または」は2文字、その他は1文字）
+            if name.startswith("または", i):
+                if buf:
+                    parts.append("".join(buf).strip())
+                    buf = []
+                i += 3
+                continue
+            if ch in "、・":
+                if buf:
+                    parts.append("".join(buf).strip())
+                    buf = []
+                i += 1
+                continue
+        buf.append(ch)
+        i += 1
+    if buf:
+        parts.append("".join(buf).strip())
+    return [p for p in parts if p]
 # 括弧修飾（有塩）（小ぶり）（皮なし）（後のせ用）等を削除
 _PAREN_QUALIFIER = re.compile(r"[（(][^）)]*[）)]")
 # 括弧内が数量を示唆するかを判定
@@ -59,21 +103,35 @@ _SYNONYMS: dict[str, str] = {
     "塩コショウ": "胡椒",
     "こしょう": "胡椒",
     "コショウ": "胡椒",
+    "黒胡椒": "胡椒",
+    "黒こしょう": "胡椒",
+    "黒コショウ": "胡椒",
     "ブラックペッパー": "胡椒",
     "粗挽き黒こしょう": "胡椒",
     "粗挽き黒コショウ": "胡椒",
+    "粗挽き黒胡椒": "胡椒",
     # にんにく系
     "おろしにんにく": "にんにく",
     "ニンニク": "にんにく",
     "ニンニクすりおろし": "にんにく",
     "にんにくすりおろし": "にんにく",
+    "すりおろしにんにく": "にんにく",
+    "すりおろしニンニク": "にんにく",
     # しょうが系
     "おろししょうが": "しょうが",
     "生姜": "しょうが",
+    "すりおろし生姜": "しょうが",
+    "すりおろししょうが": "しょうが",
     # 玉ねぎ系
     "新玉ねぎ": "玉ねぎ",
     "新玉": "玉ねぎ",
+    "新たま": "玉ねぎ",
+    "新たまねぎ": "玉ねぎ",
+    "新玉葱": "玉ねぎ",
+    "玉葱": "玉ねぎ",
+    "たまねぎ": "玉ねぎ",
     # ねぎ系（青ねぎ/万能ねぎ/小ねぎは全て薬味用の細ねぎ）
+    "ネギ": "ねぎ",
     "青ネギ": "ねぎ",
     "青ねぎ": "ねぎ",
     "万能ねぎ": "ねぎ",
@@ -81,6 +139,10 @@ _SYNONYMS: dict[str, str] = {
     "刻みネギ": "ねぎ",
     "刻みねぎ": "ねぎ",
     "小ねぎ": "ねぎ",
+    "小ネギ": "ねぎ",
+    "細ねぎ": "ねぎ",
+    "細ネギ": "ねぎ",
+    "小口切りネギ": "ねぎ",
     # パセリ系
     "粉末パセリ": "パセリ",
     "ドライパセリ": "パセリ",
@@ -91,25 +153,71 @@ _SYNONYMS: dict[str, str] = {
     "鮪": "まぐろ",
     "タラの切り身": "タラ",
     "鱈": "タラ",
+    "たら": "タラ",
     "黒アワビ": "アワビ",
+    # 醤油系
+    "しょう油": "醤油",
+    "しょうゆ": "醤油",
+    "ショウユ": "醤油",
+    # 酒系（紹興酒は別の特定酒なので残す）
+    "日本酒": "酒",
+    # 酢系（黒酢は別カテゴリでも本酢として統合）
+    "穀物酢": "酢",
+    # 出汁系
+    "鰹節": "かつお節",
+    "削りおかか": "かつお節",
+    "おかか": "かつお節",
+    "削り節": "かつお節",
+    # ごま系
+    "白すりごま": "ごま",
+    "すりごま": "ごま",
+    "白ごま": "ごま",
+    "いりごま": "ごま",
     # チーズ系（別種は残す）
     "とろけるチーズ": "とろけるチーズ",
-    # 酒/醤油はそのまま
 }
 
 # 正規化後の名前ごとにカテゴリを強制（LLM の判定より優先）
 _CATEGORY_OVERRIDE: dict[str, str] = {
+    # 魚介類
     "まぐろ": "魚介類",
     "タラ": "魚介類",
     "アワビ": "魚介類",
     "サーモン": "魚介類",
     "エビ": "魚介類",
     "びんちょう鮪": "魚介類",
+    # 調味料
     "胡椒": "調味料",
     "塩": "調味料",
     "にんにく": "調味料",
     "しょうが": "調味料",
     "マヨネーズ": "調味料",
+    "醤油": "調味料",
+    "酒": "調味料",
+    "紹興酒": "調味料",
+    "酢": "調味料",
+    "みりん": "調味料",
+    "砂糖": "調味料",
+    "ごま油": "調味料",
+    "オリーブオイル": "調味料",
+    "サラダ油": "調味料",
+    "オイスターソース": "調味料",
+    "ポン酢": "調味料",
+    "和風だし": "調味料",
+    "鶏がらスープの素": "調味料",
+    "梅肉ソース": "調味料",
+    "牡蠣だし醤油": "調味料",
+    "本つゆ": "調味料",
+    "本葛粉": "調味料",
+    "片栗粉": "調味料",
+    "薄力粉": "調味料",
+    "薄力粉または片栗粉": "調味料",
+    "味の素": "調味料",
+    "味覇": "調味料",
+    "レモン汁": "調味料",
+    "ごま": "調味料",
+    "かつお節": "調味料",
+    # 野菜
     "パセリ": "野菜",
     "玉ねぎ": "野菜",
     "ねぎ": "野菜",
@@ -188,7 +296,7 @@ def _preprocess_items(items: list[ShoppingItem]) -> list[dict]:
     for it in items:
         raw_name = it.item_name or ""
         raw_qty = it.quantity or ""
-        parts = [p.strip() for p in _COMPOUND_SPLIT.split(raw_name) if p.strip()]
+        parts = _split_compound(raw_name)
         if not parts:
             parts = [raw_name]
         for part in parts:
@@ -245,6 +353,28 @@ def _collapse_slash_quantity(q: str) -> str:
     if specific:
         return "、".join(specific)
     return parts[0]
+
+
+_TOTAL_PREFIX = re.compile(r"^\s*合計[ 　]*")
+
+
+def _clean_output_quantity(q: str | None) -> str | None:
+    """LLM出力数量を整える: '合計 ' プレフィックス除去、曖昧語の冗長重複を整理。"""
+    if not q:
+        return q
+    cleaned = _TOTAL_PREFIX.sub("", q).strip()
+    # 「、」「,」「 / 」区切りのトークンを取り出し
+    tokens = [t.strip() for t in re.split(r"[、,]|\s/\s", cleaned) if t.strip()]
+    if not tokens:
+        return cleaned or None
+    # 重複削除（順序保持）
+    tokens = list(dict.fromkeys(tokens))
+    specific = [t for t in tokens if not _is_vague(t)]
+    if specific:
+        # 具体値がある場合は曖昧語を捨てる（数値情報を優先）
+        return "、".join(specific)
+    # 全て曖昧語なら1つだけ残す（情報量はどれも同じ）
+    return tokens[0]
 
 
 def _merge_same_name(items: list[dict]) -> list[dict]:
@@ -322,24 +452,30 @@ def _build_user_prompt(items: list[ShoppingItem]) -> str:
         "【整理前のリスト】 形式: 連番. name | quantity | category | status\n"
         f"{item_block}\n\n"
         "【必ず統合する類似食材の例】\n"
-        "- 新玉ねぎ / 玉ねぎ / 新玉 → 「玉ねぎ」\n"
-        "- 塩コショウ / 塩胡椒 / ブラックペッパー / 粗挽き黒こしょう / 胡椒 → 「胡椒」\n"
-        "- ニンニク / にんにく / おろしにんにく / ニンニクすりおろし → 「にんにく」\n"
-        "- しょうが / 生姜 / おろししょうが → 「しょうが」\n"
+        "- 新玉ねぎ / 新たまねぎ / 玉ねぎ / 新玉 → 「玉ねぎ」\n"
+        "- 塩コショウ / 塩胡椒 / ブラックペッパー / 黒胡椒 / 黒こしょう / 粗挽き黒こしょう / 胡椒 → 「胡椒」\n"
+        "- ニンニク / にんにく / おろしにんにく / すりおろしニンニク → 「にんにく」\n"
+        "- しょうが / 生姜 / おろししょうが / すりおろし生姜 → 「しょうが」\n"
         "- オリーブオイル（炒め用）/ オリーブオイル → 「オリーブオイル」\n"
         "- バター（有塩）/ バター → 「バター」\n"
         "- 粉チーズ（後のせ用）/ 粉チーズ → 「粉チーズ」\n"
-        "- 醤油 / しょうゆ → 「醤油」\n"
+        "- 醤油 / しょうゆ / しょう油 → 「醤油」\n"
+        "- 酒 / 日本酒 → 「酒」（紹興酒は別として残す）\n"
+        "- 鰹節 / かつお節 / 削りおかか / おかか → 「かつお節」\n"
+        "- 白すりごま / すりごま / 白ごま / ごま → 「ごま」\n"
         "- 薄力粉または片栗粉 → 「薄力粉」\n"
-        "- ネギ / 青ネギ / 刻みネギ / 万能ねぎ / 小口切りネギ → 「ねぎ」\n"
+        "- ネギ / 青ネギ / 刻みネギ / 万能ねぎ / 小口切りネギ / 細ねぎ → 「ねぎ」\n"
         "- サラダ菜 / レタス → それぞれ別（混同しない）\n"
-        "- 鶏もも肉 / 鶏むね肉 / 鶏ささみ → 部位ごとに別（統合しない）\n\n"
+        "- 鶏もも肉 / 鶏むね肉 / 鶏ささみ → 部位ごとに別（統合しない）\n"
+        "- スライスチーズ / とろけるチーズ / 粉チーズ / ベビーチーズ → それぞれ別（混同しない）\n\n"
         "【整理ルール】\n"
         "- 同じ食材または明らかな類似食材を1つに統合する（上記の例を参考に積極的に統合）\n"
         "- 統合時の数量は合計できれば合計（例: '2個 + 3個' → '5個'）、単位が混在する場合は簡潔に併記（例: '1束、150g'）\n"
+        "- 数量に「合計 」プレフィックスは付けない。具体値があるときは曖昧語（適量・少々・適宜・あれば 等）は省く\n"
         "- レシピ名を含む長い数量注釈は出力に含めない。量の本質のみを残す\n"
         "- カテゴリは必ず次のいずれか: 野菜 / 肉類 / 魚介類 / 卵・乳製品 / 穀類 / 調味料 / その他\n"
-        "- 砂糖・塩・醤油・味噌・酢・油・みりん・だし・スパイス類は「調味料」\n"
+        "- 砂糖・塩・醤油・味噌・酢・油・みりん・だし・スパイス類・スープの素・市販ソースは「調味料」\n"
+        "- 梅肉ソース・鶏がらスープの素・牡蠣だし醤油・本つゆ・味の素・味覇 など → 「調味料」\n"
         "- きゅうり・トマト・玉ねぎ・ねぎ・きのこ類・葉物などは「野菜」\n"
         "- is_excluded は元の全エントリが「在庫あり」のとき true、1つでも「要購入」があれば false\n"
         "- 元のリストにない食材を追加してはならない\n\n"
@@ -382,6 +518,7 @@ def _validate_items(raw: dict, known_names: set[str] | None = None) -> list[dict
             # LLM が入力の " / " 区切りをそのまま echo することがあるので畳む
             if qty and " / " in qty:
                 qty = _collapse_slash_quantity(qty)
+            qty = _clean_output_quantity(qty)
 
         category = entry.get("category")
         if category not in STANDARD_CATEGORIES:
@@ -442,6 +579,27 @@ async def organize_shopping_request(
     organized = _validate_items(raw, known_names=known_names)
     # LLM が同名の複数行を返すことがあるので post-merge
     organized = _merge_same_name(organized)
+
+    # LLM が一部食材を出力から落とす場合があるので、失われた食材を復元する。
+    # 前処理結果から漏れたものを最低限の数量で追加（情報の欠落を防ぐ）。
+    output_names = {it["item_name"] for it in organized}
+    by_name = {g["name"]: g for g in preprocessed}
+    for name in known_names - output_names:
+        g = by_name[name]
+        # 数量を簡潔化して結合
+        simplified = [_simplify_quantity_string(q) for q in g["quantities"]]
+        unique_q = list(dict.fromkeys(q for q in simplified if q))
+        qty = _clean_output_quantity("、".join(unique_q)) if unique_q else None
+        category = _CATEGORY_OVERRIDE.get(name, g["category"])
+        if category not in STANDARD_CATEGORIES:
+            category = "その他"
+        organized.append({
+            "item_name": name,
+            "quantity": qty,
+            "category": category,
+            "is_excluded": bool(g["is_excluded"]),
+        })
+        logger.info("organize: 復元した食材 %s (LLM出力から欠落)", name)
 
     # Pantryチェック用の在庫名（整理後の名前で再判定する）
     pantry_names = await get_available_pantry_names(db, user_id)

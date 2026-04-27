@@ -46,6 +46,15 @@ class MenuImportRequest(BaseModel):
         return self
 
 
+class SelfMenuImportRequest(BaseModel):
+    """非admin向け: 対象は常にログイン中のユーザー。"""
+    week_start: date
+    recipes: list[ImportRecipeInput] = Field(default_factory=list)
+    menu: dict[str, ImportMenuSlot] = Field(default_factory=dict)
+    generate_shopping_list: bool = True
+    dry_run: bool = False
+
+
 class TargetUserBrief(BaseModel):
     id: str
     email: str

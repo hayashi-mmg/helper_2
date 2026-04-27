@@ -25,7 +25,7 @@ class AggregatedIngredient:
     """集約された食材情報。"""
     name: str
     category: str
-    quantities: list[str] = field(default_factory=list)  # ("レシピ名", "数量") のペア
+    quantities: list[tuple[str, str]] = field(default_factory=list)  # (レシピ名, 数量) のタプル
     recipe_names: list[str] = field(default_factory=list)
     ingredient_ids: list[uuid.UUID] = field(default_factory=list)
 
@@ -70,7 +70,7 @@ def _aggregate_ingredients(
 
         agg = grouped[key]
         if ing.quantity:
-            agg.quantities.append(f"{recipe_name} {ing.quantity}")
+            agg.quantities.append((recipe_name, ing.quantity))
         agg.recipe_names.append(recipe_name)
         agg.ingredient_ids.append(ing.id)
 
@@ -82,8 +82,9 @@ def _build_quantity_text(agg: AggregatedIngredient) -> str | None:
     if not agg.quantities:
         return None
     if len(agg.quantities) == 1:
-        return agg.quantities[0].split(" ", 1)[-1] if " " in agg.quantities[0] else agg.quantities[0]
-    text = "（" + " + ".join(agg.quantities) + "）"
+        return agg.quantities[0][1]
+    parts = [f"{recipe} {qty}" for recipe, qty in agg.quantities]
+    text = "（" + " + ".join(parts) + "）"
     if len(text) > 200:
         text = text[:197] + "…）"
     return text

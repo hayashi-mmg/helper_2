@@ -49,3 +49,51 @@ export async function suggestMenu(
   )
   return data
 }
+
+export interface SelfMenuImportPayload {
+  week_start: string
+  recipes: Array<{
+    name: string
+    category: string
+    type: string
+    difficulty: string
+    cooking_time: number
+    ingredients_text: string | null
+    instructions: string | null
+    memo: string | null
+    recipe_url: string | null
+  }>
+  menu: Record<
+    string,
+    {
+      breakfast: Array<{ recipe_name: string; recipe_type: string }>
+      dinner: Array<{ recipe_name: string; recipe_type: string }>
+    }
+  >
+  generate_shopping_list?: boolean
+  dry_run?: boolean
+}
+
+export interface SelfMenuImportResponse {
+  applied: boolean
+  target_user: { id: string; email: string; full_name: string; role: string }
+  week_start: string
+  created_recipe_count: number
+  reused_recipe_count: number
+  replaced_menu: boolean
+  shopping_list: {
+    request_id: string
+    total_items: number
+    excluded_items: number
+    active_items: number
+    replaced_existing: boolean
+  } | null
+  warnings: string[]
+}
+
+export async function importSelfMenu(
+  payload: SelfMenuImportPayload,
+): Promise<SelfMenuImportResponse> {
+  const { data } = await client.post<SelfMenuImportResponse>('/menus/import', payload)
+  return data
+}

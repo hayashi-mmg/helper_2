@@ -13,6 +13,12 @@ from app.crud.menu import (
     upsert_weekly_menu,
 )
 from app.db.models.user import User
+from app.crud.admin_menu_import import import_menu_for_user
+from app.schemas.admin_menu_import import (
+    MenuImportRequest,
+    MenuImportResponse,
+    SelfMenuImportRequest,
+)
 from app.schemas.menu import WeeklyMenuClear, WeeklyMenuCopy, WeeklyMenuUpdate
 from app.schemas.menu_suggestion import MenuSuggestionRequest, WeeklyMenuSuggestionResponse
 from app.services.llm_client import (
@@ -92,12 +98,12 @@ async def clear_week_menu(
 @router.post("/suggest", response_model=WeeklyMenuSuggestionResponse)
 async def suggest_week_menu(
     data: MenuSuggestionRequest,
-    current_user: User = Depends(require_role("senior")),
+    current_user: User = Depends(require_role("senior", "helper", "care_manager")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Ollama による1週間分の献立提案（利用者本人のみ）。
+    """Ollama による1週間分の献立提案。
 
-    提案結果は DB 保存せず返却する。利用者が画面で確認後、既存の
+    提案結果は DB 保存せず返却する。確認後、既存の
     ``PUT /menus/week`` で適用する。
     """
     normalized_request = MenuSuggestionRequest(
@@ -128,3 +134,24 @@ async def suggest_week_menu(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="提案の解析に失敗しました。もう一度お試しください",
         )
+
+
+@router.post("/import", response_model=MenuImportResponse)
+async def import_self_menu(
+    data: SelfMenuImportRequest,
+    current_user: User = Depends(require_role("senior", "helper", "care_manager")),
+    db: AsyncSession = Depends(get_db),
+) -> MenuImportResponse:
+    """エクスポートJSONを自分の献立として取り込む（admin不要）。
+
+    `dry_run=true` でプレビューのみ返す。
+    """
+    admin_payload = MenuImportRequest(
+        target_user_id=str(current_user.id),
+        week_start=data.week_start,
+        recipes=data.recipes,
+        menu=data.menu,
+        generate_shopping_list=data.generate_shopping_list,
+        dry_run=data.dry_run,
+    )
+    return await import_menu_for_user(db, admin_payload, current_user)

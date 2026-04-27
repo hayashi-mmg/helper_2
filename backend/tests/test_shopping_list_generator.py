@@ -101,14 +101,23 @@ class TestBuildQuantityText:
     """_build_quantity_text のテスト。"""
 
     def test_single_quantity(self):
-        agg = AggregatedIngredient(name="鶏もも肉", category="肉類", quantities=["照り焼き 300g"])
+        agg = AggregatedIngredient(name="鶏もも肉", category="肉類", quantities=[("照り焼き", "300g")])
         text = _build_quantity_text(agg)
         assert text == "300g"
+
+    def test_single_quantity_recipe_name_with_space(self):
+        """レシピ名にスペースが含まれても数量は混入しないこと。"""
+        agg = AggregatedIngredient(
+            name="本つゆ", category="調味料",
+            quantities=[("おむすびの具材 本つゆ胡麻チーおかか", "大さじ4")],
+        )
+        text = _build_quantity_text(agg)
+        assert text == "大さじ4"
 
     def test_multiple_quantities(self):
         agg = AggregatedIngredient(
             name="鶏もも肉", category="肉類",
-            quantities=["照り焼き 300g", "親子丼 200g"],
+            quantities=[("照り焼き", "300g"), ("親子丼", "200g")],
         )
         text = _build_quantity_text(agg)
         assert "照り焼き 300g" in text

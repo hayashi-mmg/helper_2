@@ -44,7 +44,7 @@ services:
       - REFRESH_TOKEN_EXPIRE_DAYS=7
       - ENVIRONMENT=development
       - DEBUG=true
-      - CORS_ORIGINS=http://localhost:3000
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:3001
       # Docker-in-WSL 環境では host.docker.internal が Linux ブリッジ(172.17.0.1)に解決され
       # Windows ホストに届かないため、WSL ゲートウェイ IP を既定値にする。
       # Docker Desktop や他環境では外部から OLLAMA_BASE_URL を上書きすること。
@@ -65,7 +65,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "3001:3000"
     volumes:
       - ./frontend:/app
       - /app/node_modules

@@ -1,9 +1,16 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Box, Button, Text, VStack, HStack, SimpleGrid, Badge, Input, Flex,
+  Box, Button, Text, VStack, HStack, SimpleGrid, Badge, Input, Flex, Textarea,
 } from '@chakra-ui/react'
-import { getWeeklyMenu, updateWeeklyMenu, copyWeeklyMenu, clearWeeklyMenu } from '@/api/menus'
+import {
+  getWeeklyMenu,
+  updateWeeklyMenu,
+  copyWeeklyMenu,
+  clearWeeklyMenu,
+  importSelfMenu,
+  type SelfMenuImportPayload,
+} from '@/api/menus'
 import { getRecipes } from '@/api/recipes'
 import type { MenuRecipeEntry, Recipe } from '@/types'
 import PageHeader from '@/components/ui/PageHeader'
@@ -12,7 +19,6 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { toaster } from '@/components/ui/toaster'
 import ShoppingListGenerator from '@/components/menu/ShoppingListGenerator'
 import MenuSuggester from '@/components/menu/MenuSuggester'
-import { useAuthStore } from '@/stores/auth'
 import { toLocalDateString } from '@/utils/date'
 import { buildImportJson } from '@/utils/menuExport'
 
@@ -83,7 +89,8 @@ export default function MenuPage() {
   const weekStart = useMemo(() => getWeekStartDate(weekOffset), [weekOffset])
   const queryClient = useQueryClient()
   const [showClearConfirm, setShowClearConfirm] = useState(false)
-  const currentUser = useAuthStore((state) => state.user)
+  const [showImport, setShowImport] = useState(false)
+  const [importJsonText, setImportJsonText] = useState('')
 
   // Recipe picker state
   const [pickerSlot, setPickerSlot] = useState<{ day: string; meal: string } | null>(null)
@@ -150,6 +157,54 @@ export default function MenuPage() {
       toaster.success({ title: '献立をクリアしました' })
     },
   })
+
+  const importMutation = useMutation({
+    mutationFn: (payload: SelfMenuImportPayload) => importSelfMenu(payload),
+    onSuccess: (res) => {
+      const shopping = res.shopping_list ? `、買い物リスト${res.shopping_list.total_items}件` : ''
+      toaster.success({
+        title: `献立を取り込みました（新規レシピ${res.created_recipe_count}件、再利用${res.reused_recipe_count}件${shopping}）`,
+      })
+      setShowImport(false)
+      setImportJsonText('')
+      queryClient.invalidateQueries({ queryKey: ['menu'] })
+      queryClient.invalidateQueries({ queryKey: ['recipes'] })
+    },
+    onError: (err: { response?: { data?: { detail?: unknown } } }) => {
+      const detail = err.response?.data?.detail
+      const msg = typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : '取り込みに失敗しました'
+      toaster.create({ title: msg, type: 'error' })
+    },
+  })
+
+  const onImportApply = () => {
+    if (!importJsonText.trim()) {
+      toaster.create({ title: 'JSONを貼り付けてください', type: 'error' })
+      return
+    }
+    let obj: unknown
+    try {
+      obj = JSON.parse(importJsonText)
+    } catch (e) {
+      toaster.create({ title: `JSONパースエラー: ${(e as Error).message}`, type: 'error' })
+      return
+    }
+    if (typeof obj !== 'object' || obj === null) {
+      toaster.create({ title: 'JSONがオブジェクトではありません', type: 'error' })
+      return
+    }
+    const o = obj as Record<string, unknown>
+    if (!Array.isArray(o.recipes) || typeof o.menu !== 'object' || o.menu === null) {
+      toaster.create({ title: 'recipes(配列) と menu(オブジェクト) が必要です', type: 'error' })
+      return
+    }
+    importMutation.mutate({
+      week_start: typeof o.week_start === 'string' ? o.week_start : weekStart,
+      recipes: o.recipes as SelfMenuImportPayload['recipes'],
+      menu: o.menu as SelfMenuImportPayload['menu'],
+      generate_shopping_list: true,
+    })
+  }
 
   const buildMenuPayload = () => {
     if (!menuData) return {}
@@ -219,6 +274,18 @@ export default function MenuPage() {
               <rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
             </svg>
             インポートJSONをコピー
+          </Button>
+          <Button
+            size="lg"
+            minH="48px"
+            variant="outline"
+            onClick={() => setShowImport(true)}
+            cursor="pointer"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+            JSONから取込
           </Button>
           <Button
             size="lg"
@@ -302,12 +369,11 @@ export default function MenuPage() {
         </HStack>
       )}
 
-      {currentUser?.role === 'senior' && (
-        <MenuSuggester
-          weekStart={weekStart}
-          onApplied={() => queryClient.invalidateQueries({ queryKey: ['menu', weekStart] })}
-        />
-      )}
+      <MenuSuggester
+        weekStart={weekStart}
+        onApplied={() => queryClient.invalidateQueries({ queryKey: ['menu', weekStart] })}
+      />
+
 
       {isLoading ? (
         <LoadingState type="cards" count={7} />
@@ -631,6 +697,61 @@ export default function MenuPage() {
         message="この週の献立をすべてクリアしますか？この操作は取り消せません。"
         loading={clearMutation.isPending}
       />
+
+      {showImport && (
+        <Box
+          position="fixed"
+          inset={0}
+          bg="blackAlpha.600"
+          zIndex={1000}
+          display="flex"
+          alignItems="center"
+          justifyContent="center"
+          p={4}
+          onClick={() => !importMutation.isPending && setShowImport(false)}
+        >
+          <Box
+            bg="bg.card"
+            borderRadius="xl"
+            p={6}
+            maxW="700px"
+            w="100%"
+            maxH="90vh"
+            overflowY="auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Text fontSize="xl" fontWeight="bold" mb={2}>JSONから献立を取込</Text>
+            <Text fontSize="sm" color="text.secondary" mb={4}>
+              「インポートJSONをコピー」で得たJSONを貼り付けてください。レシピは name で照合し、未登録のものは自動作成されます。買い物リストも同週で再生成されます。
+            </Text>
+            <Textarea
+              value={importJsonText}
+              onChange={(e) => setImportJsonText(e.target.value)}
+              placeholder='{"week_start": "...", "recipes": [...], "menu": {...}}'
+              rows={14}
+              fontFamily="mono"
+              fontSize="sm"
+              mb={4}
+            />
+            <HStack justify="flex-end" gap={3}>
+              <Button
+                variant="outline"
+                onClick={() => setShowImport(false)}
+                disabled={importMutation.isPending}
+              >
+                キャンセル
+              </Button>
+              <Button
+                colorPalette="blue"
+                onClick={onImportApply}
+                loading={importMutation.isPending}
+              >
+                取り込む
+              </Button>
+            </HStack>
+          </Box>
+        </Box>
+      )}
     </Box>
   )
 }
