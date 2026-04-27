@@ -13,10 +13,9 @@ frontend/.env.production
 frontend/.env.staging
 !frontend/.env.example
 
-# SSL証明書
-nginx/ssl/*.pem
-nginx/ssl/*.key
-nginx/ssl/*.crt
+# SSL証明書 / 運用時生成 (VPS)
+nginx/
+certbot_data/
 
 # ==============================
 # Python / Backend
